@@ -1,18 +1,76 @@
 use axum::{
+    Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Form, Path, State},
     handler::Handler,
     http::StatusCode,
+    response::Html,
     routing::{delete, get},
-    Router,
 };
+use serde::Deserialize;
 use std::{
     collections::HashMap,
+    sync::{Arc, RwLock},
     thread,
     time::Duration,
-    sync::{Arc, RwLock},
 };
 use tokio::task;
+
+#[derive(Deserialize)]
+struct FormData {
+    number: i32,
+}
+
+async fn get_form() -> Html<String> {
+    let form = r#"
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Number Form</title>
+        </head>
+        <body>
+            <h1>Enter an Integer</h1>
+            <form action="/form" method="POST">
+                <label for="number">Number:</label>
+                <input type="number" id="number" name="number" required>
+                <button type="submit">Submit</button>
+            </form>
+        </body>
+        </html>
+    "#;
+    Html(form.to_string())
+}
+
+async fn post_form(
+    State(state): State<SharedState>,
+    Form(form_data): Form<FormData>,
+) -> Html<String> {
+    {
+        let state = &mut state.write().unwrap();
+        state.set_counter(form_data.number);
+    }
+    println!("Form submitted with number: {}", form_data.number);
+    let response = format!(
+        r#"
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Number Submission</title>
+        </head>
+        <body>
+            <h1>An integer was submitted</h1>
+            <p>It's value was {}.</p>
+        </body>
+        </html>
+    "#,
+        form_data.number
+    );
+    Html(response)
+}
 
 #[tokio::main]
 async fn main() {
@@ -20,28 +78,27 @@ async fn main() {
 
     let blocking_ref = Arc::clone(&shared_state);
     let _res = task::spawn_blocking(move || {
-        let mut counter: i32 = 0;
         loop {
-            println!("counter={}", counter);
+            let counter: i32;
             {
                 let state = &mut blocking_ref.write().unwrap();
-                state.setCounter(counter)
+                counter = state.get_counter() + 1;
+                state.set_counter(counter);
             }
+            println!("counter={}", counter);
             thread::sleep(Duration::from_secs(4));
-            counter += 1;
         }
     });
-
-    let web_ref = Arc::clone(&shared_state);
 
     // Build our application by composing routes
     let app = Router::new()
         .route(
-            "/{key}",
-            get(kv_get)
-                .post_service(
-                    kv_set.with_state(web_ref),
-                ),
+            "/form",
+            get(get_form).post_service(post_form.with_state(Arc::clone(&shared_state))),
+        )
+        .route(
+            "/access/{key}",
+            get(kv_get).post_service(kv_set.with_state(Arc::clone(&shared_state))),
         )
         .route("/keys", get(list_keys))
         // Nest our admin routes under `/admin`
@@ -65,11 +122,11 @@ struct AppState {
 }
 
 impl AppState {
-    fn setCounter(&mut self, val: i32) {
+    fn set_counter(&mut self, val: i32) {
         self.counter = val;
     }
 
-    fn getCounter(&self) -> i32 {
+    fn get_counter(&self) -> i32 {
         self.counter
     }
 }
@@ -81,10 +138,10 @@ async fn kv_get(
     let state = &state.read().unwrap();
 
     if key == "counter" {
-        let counter_string = state.getCounter().to_string();
+        let counter_string = state.get_counter().to_string();
         let bytes = counter_string.as_bytes();
-        println!("Getting counter {}", state.getCounter());
-        return Ok(bytes.to_vec().into())
+        println!("Getting counter {}", state.get_counter());
+        return Ok(bytes.to_vec().into());
     }
 
     if let Some(value) = state.db.get(&key) {
