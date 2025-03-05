@@ -24,10 +24,8 @@ async fn main() {
         loop {
             println!("counter={}", counter);
             {
-                let counter_string = counter.to_string();
-                let bytes = counter_string.as_bytes();
-                let db = &mut blocking_ref.write().unwrap().db;
-                db.insert("counter".to_string(), bytes.to_vec().into());
+                let state = &mut blocking_ref.write().unwrap();
+                state.setCounter(counter)
             }
             thread::sleep(Duration::from_secs(4));
             counter += 1;
@@ -63,15 +61,33 @@ type SharedState = Arc<RwLock<AppState>>;
 #[derive(Default)]
 struct AppState {
     db: HashMap<String, Bytes>,
+    counter: i32,
+}
+
+impl AppState {
+    fn setCounter(&mut self, val: i32) {
+        self.counter = val;
+    }
+
+    fn getCounter(&self) -> i32 {
+        self.counter
+    }
 }
 
 async fn kv_get(
     Path(key): Path<String>,
     State(state): State<SharedState>,
 ) -> Result<Bytes, StatusCode> {
-    let db = &state.read().unwrap().db;
+    let state = &state.read().unwrap();
 
-    if let Some(value) = db.get(&key) {
+    if key == "counter" {
+        let counter_string = state.getCounter().to_string();
+        let bytes = counter_string.as_bytes();
+        println!("Getting counter {}", state.getCounter());
+        return Ok(bytes.to_vec().into())
+    }
+
+    if let Some(value) = state.db.get(&key) {
         Ok(value.clone())
     } else {
         Err(StatusCode::NOT_FOUND)
