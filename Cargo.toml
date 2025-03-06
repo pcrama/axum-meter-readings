@@ -7,4 +7,5 @@ edition = "2024"
 axum = "0.8.1"
 serde = { version = "1.0.218", features = ["serde_derive"] }
 tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread"] }
+time = "0.3.39"
 tower = "0.5.2"

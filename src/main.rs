@@ -16,6 +16,8 @@ use std::{
 };
 use tokio::task;
 
+pub mod p1_meter;
+
 #[derive(Deserialize)]
 struct FormData {
     number: i32,
