@@ -48,7 +48,15 @@ fn parse_date_time(line: &str) -> Result<Option<OffsetDateTime>, Box<dyn Error>>
                 let secs = u8::from_str(&yymmddhhmmssx[10..12])?;
                 let date = Date::from_calendar_date(2000 + yy, mm, dd)?;
                 let datetime = date.with_hms(hours, mins, secs)?;
-                let datetime = datetime.assume_offset(UtcOffset::UTC);
+                let datetime = datetime.assume_offset(UtcOffset::from_hms(
+                    if yymmddhhmmssx.chars().nth(12).unwrap_or('?') == 'S' {
+                        2
+                    } else {
+                        1
+                    },
+                    0,
+                    0,
+                )?);
                 Ok(Some(datetime))
             } else {
                 Ok(None) // I should (but am not going to) define an error type here
@@ -61,6 +69,7 @@ fn parse_date_time(line: &str) -> Result<Option<OffsetDateTime>, Box<dyn Error>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use time::Duration;
 
     #[test]
     fn strip_prefix_and_suffix_prefix_mismatch_expect_none() {
@@ -112,17 +121,29 @@ mod tests {
     }
 
     #[test]
-    fn parse_date_time_good_date_returned() {
-        let datetime = parse_date_time("0-0:1.0.0(241025191816S)")
+    fn parse_date_time_good_date_returned_daylight_saving_time() {
+        let datetime = parse_date_time("0-0:1.0.0(240825191816S)")
             .expect("Some(date) expected here")
             .expect("date expected here");
-        assert_eq!(datetime.year(), 2024);
-        assert_eq!(datetime.month(), Month::October);
-        assert_eq!(datetime.day(), 25);
-        assert_eq!(datetime.hour(), 19);
-        assert_eq!(datetime.minute(), 18);
-        assert_eq!(datetime.second(), 16);
-        assert_eq!(datetime.offset(), UtcOffset::UTC);
+        let expected = Date::from_calendar_date(2024, Month::August, 25)
+            .unwrap()
+            .with_hms(17, 18, 16)
+            .unwrap()
+            .assume_offset(UtcOffset::UTC);
+        assert_eq!(datetime - expected, Duration::ZERO);
+    }
+
+    #[test]
+    fn parse_date_time_good_date_returned_winter_time() {
+        let datetime = parse_date_time("0-0:1.0.0(231222191618W)")
+            .expect("Some(date) expected here")
+            .expect("date expected here");
+        let expected = Date::from_calendar_date(2023, Month::December, 22)
+            .unwrap()
+            .with_hms(18, 16, 18)
+            .unwrap()
+            .assume_offset(UtcOffset::UTC);
+        assert_eq!(datetime - expected, Duration::ZERO);
     }
 
     #[test]
@@ -154,7 +175,23 @@ mod tests {
     fn parse_lines_happy_path() {
         assert_eq!(
             parse_lines("\n0-0:1.0.0(241025000000S)\n\n1-0:1.8.1(002654.919*kWh)\n\n1-0:1.8.2(002420.293*kWh)\n\n1-0:2.8.1(006254.732*kWh)\n\n1-0:2.8.2(002457.202*kWh)".lines()).expect("Ok(some meas) expected here"),
-            Some(CompleteP1Measurement { timestamp: Date::from_calendar_date(2024, Month::October, 25).unwrap().midnight().assume_utc(), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
+            Some(CompleteP1Measurement { timestamp: Date::from_calendar_date(2024, Month::October, 25).unwrap().midnight().assume_offset(UtcOffset::from_hms(2,0,0).unwrap()), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
+        )
+    }
+
+    #[test]
+    fn parse_lines_skips_suffix_of_previous_datagram() {
+        assert_eq!(
+            parse_lines(".1(000054.732*kWh)\n\n1-0:2.8.2(000057.202*kWh)\n\n0-0:1.0.0(241025000000S)\n\n1-0:1.8.1(002654.919*kWh)\n\n1-0:1.8.2(002420.293*kWh)\n\n1-0:2.8.1(006254.732*kWh)\n\n1-0:2.8.2(002457.202*kWh)".lines()).expect("Ok(some meas) expected here"),
+            Some(CompleteP1Measurement { timestamp: Date::from_calendar_date(2024, Month::October, 25).unwrap().midnight().assume_offset(UtcOffset::from_hms(2,0,0).unwrap()), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
+        )
+    }
+
+    #[test]
+    fn parse_lines_returns_first_full_datagram() {
+        assert_eq!(
+            parse_lines(".1(000054.732*kWh)\n\n1-0:2.8.2(000057.202*kWh)\n\n0-0:1.0.0(241025000000S)\n\n1-0:1.8.1(002654.919*kWh)\n\n1-0:1.8.2(002420.293*kWh)\n\n1-0:2.8.1(006254.732*kWh)\n\n1-0:2.8.2(002457.202*kWh)\n\n0-0:1.0.0(251126000000W)\n\n1-0:1.8.1(992654.919*kWh)\n\n1-0:1.8.2(992420.293*kWh)\n\n1-0:2.8.1(996254.732*kWh)\n\n1-0:2.8.2(992457.202*kWh)".lines()).expect("Ok(some meas) expected here"),
+            Some(CompleteP1Measurement { timestamp: Date::from_calendar_date(2024, Month::October, 25).unwrap().midnight().assume_offset(UtcOffset::from_hms(2,0,0).unwrap()), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
         )
     }
 }
