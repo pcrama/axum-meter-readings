@@ -19,7 +19,9 @@ use std::{
 };
 use tokio::task;
 
-pub mod p1_meter;
+// pub mod blocking_task;
+// pub mod p1_meter;
+use crate::blocking_task::blocking_task_loop_body;
 
 #[derive(Deserialize)]
 struct FormData {
@@ -82,12 +84,16 @@ async fn main() {
     let shared_state = SharedState::default();
 
     let p1_data_cmd = env::var("AXUM_METER_READINGS_P1_DATA_CMD")
-        .unwrap_or_else(|_| "cat /dev/tty00".to_string());
+        .unwrap_or_else(|_| "sudo stty -F /dev/ttyUSB0 115200 cs8 -parenb; head -n 30 /dev/ttyUSB0".to_string());
+    let pv_2022_cmd = env::var("AXUM_METER_READINGS_PV_2022_CMD")
+        .unwrap_or_else(|_| "curl --silent --insecure --connect-timeout 1 --max-time 2 https://sunnyboy50/dyn/getDashValues.json".to_string());
+
     let blocking_ref = Arc::clone(&shared_state);
     let _res = task::spawn_blocking(move || {
         println!("AXUM_METER_READINGS_P1_DATA_CMD='{}'", p1_data_cmd);
+        println!("AXUM_METER_READINGS_PV_2022_CMD='{}'", pv_2022_cmd);
         loop {
-            blocking_task_loop_body(&blocking_ref, &p1_data_cmd);
+            blocking_task_loop_body(&blocking_ref, &p1_data_cmd, &pv_2022_cmd);
         }
     });
 
@@ -112,24 +118,6 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(bind_addr).await.unwrap();
     println!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
-}
-
-type SharedState = Arc<RwLock<AppState>>;
-
-#[derive(Default)]
-struct AppState {
-    db: HashMap<String, Bytes>,
-    counter: i32,
-}
-
-impl AppState {
-    fn set_counter(&mut self, val: i32) {
-        self.counter = val;
-    }
-
-    fn get_counter(&self) -> i32 {
-        self.counter
-    }
 }
 
 async fn kv_get(
@@ -177,30 +165,4 @@ fn admin_routes() -> Router<SharedState> {
     Router::new()
         .route("/keys", delete(delete_all_keys))
         .route("/key/{key}", delete(remove_key))
-}
-
-fn blocking_task_loop_body(blocking_ref: &Arc<RwLock<AppState>>, p1_data_cmd: &str) {
-    let counter: i32;
-    {
-        let state = &mut blocking_ref.write().unwrap();
-        counter = state.get_counter() + 1;
-        state.set_counter(counter);
-    }
-    println!("counter={}", counter);
-    thread::sleep(Duration::from_secs(4));
-
-    let stdout = Command::new("sh")
-        .arg("-c")
-        .arg(p1_data_cmd)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap()
-        .stdout
-        .unwrap();
-    let reader = BufReader::new(stdout);
-    match p1_meter::parse_lines(reader.lines().map(|x| x.unwrap())) {
-        Ok(Some(complete)) => println!("complete = {:?}", complete),
-        Ok(None) => println!("nothing parsed"),
-        Err(_) => panic!("Error"),
-    }
 }
