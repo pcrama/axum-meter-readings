@@ -5,7 +5,7 @@ use axum::{
     handler::Handler,
     http::StatusCode,
     response::Html,
-    routing::{delete, get},
+    routing::{delete, get, get_service},
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -28,9 +28,9 @@ struct FormData {
     number: i32,
 }
 
-async fn get_form() -> Html<String> {
-    let form = r#"
-        <!DOCTYPE html>
+async fn get_form(State(state): State<SharedState>) -> Html<String> {
+    let form = format!(
+        r#"<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
@@ -41,12 +41,13 @@ async fn get_form() -> Html<String> {
             <h1>Enter an Integer</h1>
             <form action="/form" method="POST">
                 <label for="number">Number:</label>
-                <input type="number" id="number" name="number" required>
+                <input type="number" id="number" name="number" required value="{}">
                 <button type="submit">Submit</button>
             </form>
         </body>
-        </html>
-    "#;
+        </html>"#,
+        state.read().unwrap().get_counter()
+    );
     Html(form.to_string())
 }
 
@@ -111,7 +112,8 @@ async fn main() {
     let app = Router::new()
         .route(
             "/form",
-            get(get_form).post_service(post_form.with_state(Arc::clone(&shared_state))),
+            get_service(get_form.with_state(Arc::clone(&shared_state)))
+                .post_service(post_form.with_state(Arc::clone(&shared_state))),
         )
         .route(
             "/access/{key}",
