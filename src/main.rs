@@ -21,6 +21,7 @@ use std::{
 use tokio::task;
 
 pub mod p1_meter;
+use crate::p1_meter::CompleteP1Measurement;
 
 #[derive(Deserialize)]
 struct FormData {
@@ -58,6 +59,7 @@ async fn post_form(
         state.set_counter(form_data.number);
     }
     println!("Form submitted with number: {}", form_data.number);
+    let state = state.read().unwrap();
     let response = format!(
         r#"
         <!DOCTYPE html>
@@ -70,10 +72,20 @@ async fn post_form(
         <body>
             <h1>An integer was submitted</h1>
             <p>It's value was {}.</p>
+            {}
+            {}
         </body>
         </html>
     "#,
-        form_data.number
+        form_data.number,
+        match state.get_p1() {
+            Some(p1) => format!("<p>p1={:?}</p>", p1),
+            None => "".to_string(),
+        },
+        match state.get_pv_2022() {
+            Some(pv_2022) => format!("<p>pv_2022={}kWh</p>", pv_2022),
+            None => "".to_string(),
+        },
     );
     Html(response)
 }
@@ -124,6 +136,8 @@ type SharedState = Arc<RwLock<AppState>>;
 struct AppState {
     db: HashMap<String, Bytes>,
     counter: i32,
+    last_p1: Option<CompleteP1Measurement>,
+    last_pv_2022: Option<f64>,
 }
 
 impl AppState {
@@ -133,6 +147,28 @@ impl AppState {
 
     fn get_counter(&self) -> i32 {
         self.counter
+    }
+
+    fn set_p1(&mut self, p1: CompleteP1Measurement) {
+        self.last_p1 = Some(p1)
+    }
+
+    fn get_p1(&self) -> Option<&CompleteP1Measurement> {
+        match &self.last_p1 {
+            Some(p1) => Some(&p1),
+            None => None,
+        }
+    }
+
+    fn set_pv_2022(&mut self, pv_2022: f64) {
+        self.last_pv_2022 = Some(pv_2022)
+    }
+
+    fn get_pv_2022(&self) -> Option<f64> {
+        match self.last_pv_2022 {
+            Some(pv_2022) => Some(pv_2022),
+            None => None,
+        }
     }
 }
 
@@ -207,13 +243,25 @@ fn blocking_task_loop_body(
         .unwrap();
     let reader = BufReader::new(stdout);
     match p1_meter::parse_lines(reader.lines().map(|x| x.unwrap())) {
-        Ok(Some(complete)) => println!("complete = {:?}", complete),
+        Ok(Some(complete)) => {
+            println!("complete = {:?}", complete);
+            {
+                let state = &mut blocking_ref.write().unwrap();
+                state.set_p1(complete);
+            }
+        }
         Ok(None) => println!("nothing parsed"),
         Err(_) => panic!("Error"),
     }
 
     match fetch_dashboard_value(pv_2022_cmd) {
-        Ok(pv_2022) => println!("PV2022={}", pv_2022),
+        Ok(pv_2022) => {
+            println!("PV2022={}", pv_2022);
+            {
+                let state = &mut blocking_ref.write().unwrap();
+                state.set_pv_2022(pv_2022);
+            }
+        }
         Err(s) => println!("PV2022 err: {}", s),
     }
 }
@@ -247,5 +295,5 @@ fn fetch_dashboard_value(pv_2022_cmd: &str) -> core::result::Result<f64, String>
         .as_f64()
         .ok_or("Invalid JSON response")?;
 
-    Ok(value)
+    Ok(value / 1000.0)
 }
