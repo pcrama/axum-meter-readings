@@ -207,11 +207,11 @@ struct PartialP1Measurement {
 
 #[derive(PartialEq, Debug)]
 pub struct CompleteP1Measurement {
-    timestamp: OffsetDateTime,
-    peak_hour_consumption: f64,
-    off_hour_consumption: f64,
-    peak_hour_injection: f64,
-    off_hour_injection: f64,
+    pub timestamp: OffsetDateTime,
+    pub peak_hour_consumption: f64,
+    pub off_hour_consumption: f64,
+    pub peak_hour_injection: f64,
+    pub off_hour_injection: f64,
 }
 
 fn complete_p1_measurement(

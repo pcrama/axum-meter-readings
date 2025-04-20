@@ -16,12 +16,18 @@ use std::{
     process::{Command, Stdio},
     sync::{Arc, RwLock},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::task;
 
 pub mod p1_meter;
 use crate::p1_meter::CompleteP1Measurement;
+
+pub mod ringbuffer;
+use crate::ringbuffer::RingBuffer;
+
+pub mod data;
+use crate::data::{Data202303, clone_data202303};
 
 #[derive(Deserialize)]
 struct FormData {
@@ -61,6 +67,21 @@ async fn post_form(
     }
     println!("Form submitted with number: {}", form_data.number);
     let state = state.read().unwrap();
+    let format_kwh = |x: Option<f64>, y: &str| {
+        x.map(|z| format!("{}: {}kWh", y, z))
+            .unwrap_or("".to_string())
+    };
+    let last_data = match state.get_last_data() {
+        Some(last_data) => format!(
+            "{} {} {} {} {}",
+            format_kwh(last_data.peak_conso_kWh, "Peak consumption"),
+            format_kwh(last_data.off_conso_kWh, "Off-hour consumption"),
+            format_kwh(last_data.peak_inj_kWh, "Peak injection"),
+            format_kwh(last_data.off_inj_kWh, "Off-hour injection"),
+            format_kwh(last_data.pv2022_kWh, "PV 2022 production"),
+        ),
+        None => "".to_string(),
+    };
     let response = format!(
         r#"
         <!DOCTYPE html>
@@ -74,19 +95,10 @@ async fn post_form(
             <h1>An integer was submitted</h1>
             <p>It's value was {}.</p>
             {}
-            {}
         </body>
         </html>
     "#,
-        form_data.number,
-        match state.get_p1() {
-            Some(p1) => format!("<p>p1={:?}</p>", p1),
-            None => "".to_string(),
-        },
-        match state.get_pv_2022() {
-            Some(pv_2022) => format!("<p>pv_2022={}kWh</p>", pv_2022),
-            None => "".to_string(),
-        },
+        form_data.number, last_data,
     );
     Html(response)
 }
@@ -134,12 +146,20 @@ async fn main() {
 
 type SharedState = Arc<RwLock<AppState>>;
 
-#[derive(Default)]
 struct AppState {
     db: HashMap<String, Bytes>,
     counter: i32,
-    last_p1: Option<CompleteP1Measurement>,
-    last_pv_2022: Option<f64>,
+    data: RingBuffer<Data202303>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        AppState {
+            db: Default::default(),
+            counter: 0,
+            data: crate::ringbuffer::new::<Data202303>(1440),
+        }
+    }
 }
 
 impl AppState {
@@ -151,26 +171,46 @@ impl AppState {
         self.counter
     }
 
-    fn set_p1(&mut self, p1: CompleteP1Measurement) {
-        self.last_p1 = Some(p1)
-    }
-
-    fn get_p1(&self) -> Option<&CompleteP1Measurement> {
-        match &self.last_p1 {
-            Some(p1) => Some(&p1),
-            None => None,
+    fn set_data(
+        &mut self,
+        p1: Option<CompleteP1Measurement>,
+        pv_2022: Option<f64>,
+    ) -> Option<Data202303> {
+        if p1 == None && pv_2022 == None {
+            return None;
         }
+
+        self.data.push(match p1 {
+            Some(p1) => Data202303 {
+                timestamp: p1.timestamp.unix_timestamp(),
+                pv2012_kWh: None,
+                pv2022_kWh: pv_2022,
+                peak_conso_kWh: Some(p1.peak_hour_consumption),
+                off_conso_kWh: Some(p1.off_hour_consumption),
+                peak_inj_kWh: Some(p1.peak_hour_injection),
+                off_inj_kWh: Some(p1.off_hour_injection),
+                gas_m3: None,
+                water_m3: None,
+            },
+            None => Data202303 {
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+                pv2012_kWh: None,
+                pv2022_kWh: pv_2022,
+                peak_conso_kWh: None,
+                off_conso_kWh: None,
+                peak_inj_kWh: None,
+                off_inj_kWh: None,
+                gas_m3: None,
+                water_m3: None,
+            },
+        })
     }
 
-    fn set_pv_2022(&mut self, pv_2022: f64) {
-        self.last_pv_2022 = Some(pv_2022)
-    }
-
-    fn get_pv_2022(&self) -> Option<f64> {
-        match self.last_pv_2022 {
-            Some(pv_2022) => Some(pv_2022),
-            None => None,
-        }
+    fn get_last_data(&self) -> Option<Data202303> {
+        self.data.peek_last(clone_data202303)
     }
 }
 
@@ -244,27 +284,30 @@ fn blocking_task_loop_body(
         .stdout
         .unwrap();
     let reader = BufReader::new(stdout);
-    match p1_meter::parse_lines(reader.lines().map(|x| x.unwrap())) {
+    let p1 = match p1_meter::parse_lines(reader.lines().map(|x| x.unwrap())) {
         Ok(Some(complete)) => {
             println!("complete = {:?}", complete);
-            {
-                let state = &mut blocking_ref.write().unwrap();
-                state.set_p1(complete);
-            }
+            Some(complete)
         }
-        Ok(None) => println!("nothing parsed"),
+        Ok(None) => {
+            println!("nothing parsed");
+            None
+        }
         Err(_) => panic!("Error"),
-    }
-
-    match fetch_dashboard_value(pv_2022_cmd) {
+    };
+    let pv_2022 = match fetch_dashboard_value(pv_2022_cmd) {
         Ok(pv_2022) => {
             println!("PV2022={}", pv_2022);
-            {
-                let state = &mut blocking_ref.write().unwrap();
-                state.set_pv_2022(pv_2022);
-            }
+            Some(pv_2022)
         }
-        Err(s) => println!("PV2022 err: {}", s),
+        Err(s) => {
+            println!("PV2022 err: {}", s);
+            None
+        }
+    };
+    {
+        let state = &mut blocking_ref.write().unwrap();
+        state.set_data(p1, pv_2022);
     }
 }
 
