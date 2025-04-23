@@ -35,6 +35,7 @@ struct FormData {
 }
 
 async fn get_form(State(state): State<SharedState>) -> Html<String> {
+    let state = state.read().unwrap();
     let form = format!(
         r#"<!DOCTYPE html>
         <html lang="en">
@@ -50,9 +51,19 @@ async fn get_form(State(state): State<SharedState>) -> Html<String> {
                 <input type="number" id="number" name="number" required value="{}">
                 <button type="submit">Submit</button>
             </form>
+            {} {} {}
         </body>
         </html>"#,
-        state.read().unwrap().get_counter()
+        state.get_counter(),
+        state.data.len(),
+        match state.data.peek_first(|r| { format!("first {}", r.timestamp) }) {
+            Some(x) => x,
+            None => "".to_string(),
+        },
+        match state.data.peek_last(|r| { format!("last {}", r.timestamp) }) {
+            Some(x) => x,
+            None => "".to_string(),
+        },
     );
     Html(form.to_string())
 }
@@ -180,9 +191,25 @@ impl AppState {
             return None;
         }
 
+        let timestamp = match &p1 {
+            Some(p1) => p1.timestamp.unix_timestamp(),
+            None => SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+        };
+        let time_since_last_update = match self.data.peek_last(|r| { r.timestamp }) {
+            Some(last_update) => timestamp - last_update,
+            None => 999,
+        };
+        if time_since_last_update < 60 {
+            println!("time_since_last_update={}", time_since_last_update);
+            return None;
+        }
+
         self.data.push(match p1 {
             Some(p1) => Data202303 {
-                timestamp: p1.timestamp.unix_timestamp(),
+                timestamp,
                 pv2012_kWh: None,
                 pv2022_kWh: pv_2022,
                 peak_conso_kWh: Some(p1.peak_hour_consumption),
@@ -193,10 +220,7 @@ impl AppState {
                 water_m3: None,
             },
             None => Data202303 {
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
+                timestamp,
                 pv2012_kWh: None,
                 pv2022_kWh: pv_2022,
                 peak_conso_kWh: None,
@@ -333,7 +357,7 @@ fn fetch_dashboard_value(pv_2022_cmd: &str) -> core::result::Result<f64, String>
     let response_text = std::str::from_utf8(&response_bytes)
         .map_err(|e| format!("Failed to parse curl response as UTF-8: {}", e))?;
 
-    print!("response_text={}", response_text);
+    println!("response_text={}", response_text);
     let json: Value =
         serde_json::from_str(response_text).map_err(|e| format!("Unable to parse JSON: {}", e))?;
     let value = json["result"]["0199-xxxxx9BD"]["6400_00260100"]["1"][0]["val"]
