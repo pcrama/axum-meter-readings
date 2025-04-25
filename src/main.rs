@@ -236,6 +236,10 @@ impl AppState {
     fn get_last_data(&self) -> Option<Data202303> {
         self.data.peek_last(clone_data202303)
     }
+
+    fn halve_data(&mut self) {
+         self.data.halve_data();
+    }
 }
 
 async fn kv_get(
@@ -331,7 +335,12 @@ fn blocking_task_loop_body(
     };
     {
         let state = &mut blocking_ref.write().unwrap();
-        state.set_data(p1, pv_2022);
+        match state.set_data(p1, pv_2022) {
+            Some(_) => {
+                state.halve_data();
+            },
+            None => {},
+        }
     }
 }
 

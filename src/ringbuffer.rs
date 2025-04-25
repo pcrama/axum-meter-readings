@@ -106,6 +106,28 @@ impl<A> RingBuffer<A> {
             return None;
         }
     }
+
+    pub fn get_capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub fn halve_data(&mut self) {
+        let len = self.len();
+        if len <= 1 {
+            self.start = 0;
+            self.end = 0;
+            return;
+        }
+        let new_len = len / 2;
+        let mut read_idx = (self.start + 1) % self.capacity;
+        let mut write_idx = self.start;
+        for _ in 0..new_len {
+            self.buffer.swap(read_idx, write_idx);
+            read_idx = (read_idx + 2) % self.capacity;
+            write_idx = (write_idx + 1) % self.capacity;
+        }
+        self.end = write_idx;
+    }
 }
 
 #[cfg(test)]
@@ -115,6 +137,11 @@ mod tests {
     #[test]
     fn fresh_ringbuffer_len_is_0() {
         assert_eq!(new::<&str>(5).len(), 0);
+    }
+
+    #[test]
+    fn ringbuffer_capacity_is_correct() {
+        assert_eq!(new::<&str>(5).get_capacity(), 5);
     }
 
     fn idint(x: &i32) -> i32 {
@@ -181,6 +208,167 @@ mod tests {
         assert_eq!(rb.len(), 3);
         assert_eq!(rb.push(7), Some(4));
         assert_eq!(rb.len(), 3);
+    }
+
+    #[test]
+    fn ringbuffer_halve_data_even_length() {
+        let mut rb = new::<i32>(7);
+        assert_eq!(rb.len(), 0);
+        assert_eq!(rb.push(3), None);
+        assert_eq!(rb.len(), 1);
+        assert_eq!(rb.push(4), None);
+        assert_eq!(rb.len(), 2);
+        assert_eq!(rb.push(5), None);
+        assert_eq!(rb.len(), 3);
+        assert_eq!(rb.push(6), None);
+        assert_eq!(rb.len(), 4);
+        rb.halve_data();
+        assert_eq!(rb.len(), 2);
+        assert_eq!(rb.get_capacity(), 7);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(4).as_ref());
+        assert_eq!(rbv.at(1), Some(6).as_ref());
+        assert_eq!(rbv.at(2), None);
+        assert_eq!(rbv.at(3), None);
+        let mut rb = rbv.thaw();
+        rb.halve_data();
+        assert_eq!(rb.len(), 1);
+        assert_eq!(rb.get_capacity(), 7);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(6).as_ref());
+        assert_eq!(rbv.at(1), None);
+        assert_eq!(rbv.at(2), None);
+        assert_eq!(rbv.at(3), None);
+
+        let mut rb = new::<i32>(4);
+        assert_eq!(rb.len(), 0);
+        assert_eq!(rb.push(3), None);
+        assert_eq!(rb.len(), 1);
+        assert_eq!(rb.push(4), None);
+        assert_eq!(rb.len(), 2);
+        assert_eq!(rb.push(5), None);
+        assert_eq!(rb.len(), 3);
+        assert_eq!(rb.push(6), None);
+        assert_eq!(rb.len(), 4);
+        rb.halve_data();
+        assert_eq!(rb.len(), 2);
+        assert_eq!(rb.get_capacity(), 4);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(4).as_ref());
+        assert_eq!(rbv.at(1), Some(6).as_ref());
+        assert_eq!(rbv.at(2), None);
+        assert_eq!(rbv.at(3), None);
+        let mut rb = rbv.thaw();
+        rb.halve_data();
+        assert_eq!(rb.len(), 1);
+        assert_eq!(rb.get_capacity(), 4);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(6).as_ref());
+        assert_eq!(rbv.at(1), None);
+        assert_eq!(rbv.at(2), None);
+        assert_eq!(rbv.at(3), None);
+    }
+
+    #[test]
+    fn ringbuffer_halve_data_odd_length() {
+        let mut rb = new::<i32>(7);
+        assert_eq!(rb.len(), 0);
+        assert_eq!(rb.push(3), None);
+        assert_eq!(rb.len(), 1);
+        assert_eq!(rb.push(4), None);
+        assert_eq!(rb.len(), 2);
+        assert_eq!(rb.push(5), None);
+        assert_eq!(rb.len(), 3);
+        assert_eq!(rb.push(6), None);
+        assert_eq!(rb.len(), 4);
+        assert_eq!(rb.push(7), None);
+        assert_eq!(rb.len(), 5);
+        rb.halve_data();
+        assert_eq!(rb.len(), 2);
+        assert_eq!(rb.get_capacity(), 7);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(4).as_ref());
+        assert_eq!(rbv.at(1), Some(6).as_ref());
+        assert_eq!(rbv.at(2), None);
+        assert_eq!(rbv.at(3), None);
+
+        let mut rb = new::<i32>(7);
+        assert_eq!(rb.len(), 0);
+        assert_eq!(rb.push(3), None);
+        assert_eq!(rb.len(), 1);
+        assert_eq!(rb.push(4), None);
+        assert_eq!(rb.len(), 2);
+        assert_eq!(rb.push(5), None);
+        assert_eq!(rb.len(), 3);
+        assert_eq!(rb.push(6), None);
+        assert_eq!(rb.len(), 4);
+        assert_eq!(rb.push(7), None);
+        assert_eq!(rb.len(), 5);
+        assert_eq!(rb.push(8), None);
+        assert_eq!(rb.len(), 6);
+        assert_eq!(rb.push(9), None);
+        assert_eq!(rb.len(), 7);
+        rb.halve_data();
+        assert_eq!(rb.len(), 3);
+        assert_eq!(rb.get_capacity(), 7);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(4).as_ref());
+        assert_eq!(rbv.at(1), Some(6).as_ref());
+        assert_eq!(rbv.at(2), Some(8).as_ref());
+        assert_eq!(rbv.at(3), None);
+        assert_eq!(rbv.at(4), None);
+        assert_eq!(rbv.at(5), None);
+        assert_eq!(rbv.at(6), None);
+        let mut rb = rbv.thaw();
+        rb.halve_data();
+        assert_eq!(rb.len(), 1);
+        assert_eq!(rb.get_capacity(), 7);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(6).as_ref());
+        assert_eq!(rbv.at(1), None);
+        assert_eq!(rbv.at(2), None);
+        assert_eq!(rbv.at(3), None);
+    }
+
+    #[test]
+    fn ringbuffer_halve_data_after_wrap_around() {
+        let mut rb = new::<usize>(7);
+        for i in 0..8 {
+            rb.push(i);
+        }
+        let rbv = freeze(rb);
+        for i in 0..7 { // proof that rb = 1 2 3 4 5 6 7
+            assert_eq!(rbv.at(i), Some(i + 1).as_ref());
+        }
+        let mut rb = rbv.thaw();
+        rb.halve_data(); // should be 2 4 6
+        assert_eq!(rb.len(), 3);
+        assert_eq!(rb.get_capacity(), 7);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(2).as_ref());
+        assert_eq!(rbv.at(1), Some(4).as_ref());
+        assert_eq!(rbv.at(2), Some(6).as_ref());
+        assert_eq!(rbv.at(3), None);
+        assert_eq!(rbv.at(4), None);
+
+        let mut rb = new::<usize>(8);
+        for i in 0..15 {
+            rb.push(i);
+        }
+        let rbv = freeze(rb);
+        for i in 0..8 { // proof that rb = 7 8 9 10 11 12 13 14
+            assert_eq!(rbv.at(i), Some(i + 7).as_ref());
+        }
+        let mut rb = rbv.thaw();
+        rb.halve_data(); // should be 8 10 12 14
+        assert_eq!(rb.len(), 4);
+        assert_eq!(rb.get_capacity(), 8);
+        let rbv = freeze(rb);
+        assert_eq!(rbv.at(0), Some(8).as_ref());
+        assert_eq!(rbv.at(1), Some(10).as_ref());
+        assert_eq!(rbv.at(2), Some(12).as_ref());
+        assert_eq!(rbv.at(3), Some(14).as_ref());
+        assert_eq!(rbv.at(4), None);
     }
 
     #[test]
