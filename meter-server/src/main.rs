@@ -8,11 +8,10 @@ use axum::{
     routing::{delete, get, get_service},
 };
 use serde::Deserialize;
-use serde_json::Value;
 use std::{
     collections::HashMap,
     env,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader},
     process::{Command, Stdio},
     sync::{Arc, RwLock},
     thread,
@@ -26,6 +25,7 @@ use meter_core::{
     data::{Data202303, clone_data202303},
     p1_meter,
     p1_meter::CompleteP1Measurement,
+    pv2022,
 };
 
 #[derive(Deserialize)]
@@ -323,7 +323,7 @@ fn blocking_task_loop_body(
         }
         Err(_) => panic!("Error"),
     };
-    let pv_2022 = match fetch_dashboard_value(pv_2022_cmd) {
+    let pv_2022 = match pv2022::fetch_dashboard_value(pv_2022_cmd) {
         Ok(pv_2022) => {
             println!("PV2022={}", pv_2022);
             Some(pv_2022)
@@ -342,36 +342,4 @@ fn blocking_task_loop_body(
             None => {},
         }
     }
-}
-
-/* {"result":{"0199-xxxxx9BD":{"6800_08822000":{"1":[{"validVals":[9401,9402,9403,9404,9405],"val":[{"tag":9404}]}]},"6800_10821E00":{"1":[{"val":"SN: xxxxxxx245"}]},"6800_08811F00":{"1":[{"validVals":[1129,1130],"val":[{"tag":1129}]}]},"6180_08214800":{"1":[{"val":[{"tag":307}]}]},"6180_08414900":{"1":[{"val":[{"tag":886}]}]},"6180_08522F00":{"1":[{"val":[{"tag":16777213}]}]},"6800_088A2900":{"1":[{"validVals":[302,9327,9375,9376,9437,19043],"val":[{"tag":302}]}]},"6100_40463600":{"1":[{"val":null}]},"6100_40463700":{"1":[{"val":null}]},"6100_40263F00":{"1":[{"val":null}]},"6400_00260100":{"1":[{"val":7459043}]},"6800_00832A00":{"1":[{"low":5000,"high":5000,"val":5000}]},"6800_008AA200":{"1":[{"low":0,"high":null,"val":0}]},"6400_00462500":{"1":[{"val":null}]},"6100_00418000":{"1":[{"val":null}]},"6800_08822B00":{"1":[{"validVals":[461],"val":[{"tag":461}]}]},"6100_0046C200":{"1":[{"val":null}]},"6400_0046C300":{"1":[{"val":7459043}]},"6802_08834500":{"1":[{"validVals":[303,1439],"val":[{"tag":1439}]}]},"6180_08412800":{"1":[{"val":[{"tag":16777213}]}]}}}}
-
-curl --silent --connect-timeout 1 --max-time 2 --insecure https://sunnyboy50/dyn/getDashValues.json */
-fn fetch_dashboard_value(pv_2022_cmd: &str) -> core::result::Result<f64, String> {
-    let stdout = Command::new("sh")
-        .arg("-c")
-        .arg(pv_2022_cmd)
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn {}: {}", pv_2022_cmd, e))?
-        .stdout
-        .ok_or(format!("Failed to get output of {}", pv_2022_cmd))?;
-
-    let mut reader = BufReader::new(stdout);
-    let mut response_bytes = Vec::new();
-    reader
-        .read_to_end(&mut response_bytes)
-        .map_err(|e| format!("Failed to read stdout: {}", e))?;
-
-    let response_text = std::str::from_utf8(&response_bytes)
-        .map_err(|e| format!("Failed to parse curl response as UTF-8: {}", e))?;
-
-    println!("response_text={}", response_text);
-    let json: Value =
-        serde_json::from_str(response_text).map_err(|e| format!("Unable to parse JSON: {}", e))?;
-    let value = json["result"]["0199-xxxxx9BD"]["6400_00260100"]["1"][0]["val"]
-        .as_f64()
-        .ok_or("Invalid JSON response")?;
-
-    Ok(value / 1000.0)
 }
