@@ -20,12 +20,11 @@ use std::{
 use tokio::task;
 
 use meter_core::{
-    ringbuffer,
-    ringbuffer::RingBuffer,
     data::{Data202303, clone_data202303},
     p1_meter,
     p1_meter::CompleteP1Measurement,
-    pv2022,
+    pv2022, ringbuffer,
+    ringbuffer::RingBuffer,
 };
 
 #[derive(Deserialize)]
@@ -55,11 +54,17 @@ async fn get_form(State(state): State<SharedState>) -> Html<String> {
         </html>"#,
         state.get_counter(),
         state.data.len(),
-        match state.data.peek_first(|r| { format!("first {}", r.timestamp) }) {
+        match state
+            .data
+            .peek_first(|r| { format!("first {}", r.timestamp) })
+        {
             Some(x) => x,
             None => "".to_string(),
         },
-        match state.data.peek_last(|r| { format!("last {}", r.timestamp) }) {
+        match state
+            .data
+            .peek_last(|r| { format!("last {}", r.timestamp) })
+        {
             Some(x) => x,
             None => "".to_string(),
         },
@@ -195,9 +200,9 @@ impl AppState {
             None => SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as i64
+                .as_secs() as i64,
         };
-        let time_since_last_update = match self.data.peek_last(|r| { r.timestamp }) {
+        let time_since_last_update = match self.data.peek_last(|r| r.timestamp) {
             Some(last_update) => timestamp - last_update,
             None => 999,
         };
@@ -237,10 +242,9 @@ impl AppState {
     }
 
     fn halve_data(&mut self) {
-         self.data.halve_data();
+        self.data.halve_data();
     }
 }
-
 
 async fn kv_get(
     Path(key): Path<String>,
@@ -338,8 +342,8 @@ fn blocking_task_loop_body(
         match state.set_data(p1, pv_2022) {
             Some(_) => {
                 state.halve_data();
-            },
-            None => {},
+            }
+            None => {}
         }
     }
 }

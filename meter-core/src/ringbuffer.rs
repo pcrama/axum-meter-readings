@@ -337,7 +337,8 @@ mod tests {
             rb.push(i);
         }
         let rbv = freeze(rb);
-        for i in 0..7 { // proof that rb = 1 2 3 4 5 6 7
+        for i in 0..7 {
+            // proof that rb = 1 2 3 4 5 6 7
             assert_eq!(rbv.at(i), Some(i + 1).as_ref());
         }
         let mut rb = rbv.thaw();
@@ -356,7 +357,8 @@ mod tests {
             rb.push(i);
         }
         let rbv = freeze(rb);
-        for i in 0..8 { // proof that rb = 7 8 9 10 11 12 13 14
+        for i in 0..8 {
+            // proof that rb = 7 8 9 10 11 12 13 14
             assert_eq!(rbv.at(i), Some(i + 7).as_ref());
         }
         let mut rb = rbv.thaw();
