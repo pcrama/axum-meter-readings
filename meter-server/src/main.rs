@@ -20,14 +20,13 @@ use std::{
 };
 use tokio::task;
 
-pub mod p1_meter;
-use crate::p1_meter::CompleteP1Measurement;
-
-pub mod ringbuffer;
-use crate::ringbuffer::RingBuffer;
-
-pub mod data;
-use crate::data::{Data202303, clone_data202303};
+use meter_core::{
+    ringbuffer,
+    ringbuffer::RingBuffer,
+    data::{Data202303, clone_data202303},
+    p1_meter,
+    p1_meter::CompleteP1Measurement,
+};
 
 #[derive(Deserialize)]
 struct FormData {
@@ -168,7 +167,7 @@ impl Default for AppState {
         AppState {
             db: Default::default(),
             counter: 0,
-            data: crate::ringbuffer::new::<Data202303>(1440),
+            data: ringbuffer::new::<Data202303>(1440),
         }
     }
 }
@@ -241,6 +240,7 @@ impl AppState {
          self.data.halve_data();
     }
 }
+
 
 async fn kv_get(
     Path(key): Path<String>,
