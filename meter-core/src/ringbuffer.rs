@@ -53,7 +53,7 @@ impl<A> RingBuffer<A> {
         } else if self.start < self.end {
             return self.end - self.start;
         } else {
-            return self.buffer.len() + self.end - self.start;
+            return self.capacity + self.end - self.start;
         }
     }
 
@@ -82,7 +82,7 @@ impl<A> RingBuffer<A> {
                 self.end = 1;
                 return Some(val);
             } else {
-                if self.buffer.len() < self.buffer.capacity() {
+                if self.end >= self.buffer.len() {
                     self.buffer.push(val);
                 } else {
                     self.buffer[self.end] = val;
@@ -101,7 +101,14 @@ impl<A> RingBuffer<A> {
             }
             return Some(val);
         } else {
-            self.buffer[self.end] = val;
+            if self.buffer.len() < self.capacity {
+                self.buffer.push(val);
+            } else {
+                if self.end >= self.capacity {
+                    self.end = 0
+                };
+                self.buffer[0] = val;
+            }
             self.end += 1;
             return None;
         }
@@ -127,6 +134,24 @@ impl<A> RingBuffer<A> {
             write_idx = (write_idx + 1) % self.capacity;
         }
         self.end = write_idx;
+    }
+
+    pub fn drop_first(&mut self, n: usize) {
+        let mut n = n;
+        let len = self.len();
+        if n >= len {
+            self.start = 0;
+            self.end = 0;
+            return;
+        }
+        while n > 0 {
+            if self.start < self.end {
+                self.start += 1;
+            } else {
+                self.start = (self.start + 1) % self.buffer.capacity();
+            }
+            n -= 1;
+        }
     }
 }
 
@@ -421,5 +446,35 @@ mod tests {
         assert_eq!(rbv.at(1), Some(6).as_ref());
         assert_eq!(rbv.at(2), Some(7).as_ref());
         assert_eq!(rbv.at(3), None);
+    }
+
+    #[test]
+    pub fn test_drop_first() {
+        let mut extra_len = 0;
+        let mut rb = new::<usize>(10);
+        rb.drop_first(5);
+        assert_eq!(rb.len(), 0);
+        rb.drop_first(5);
+        assert_eq!(rb.len(), 0);
+        for j in 3..8 {
+            let mut k = j;
+            while k > 0 {
+                rb.push(k);
+                k -= 1;
+            }
+            assert_eq!(rb.len(), j + extra_len);
+            let rbv = freeze(rb);
+            assert_eq!(rbv.at(extra_len), Some(j).as_ref());
+            rb = rbv.thaw();
+            rb.drop_first(2);
+            assert_eq!(rb.len(), j - 2 + extra_len);
+            rb.drop_first(1);
+            assert_eq!(rb.len(), j - 3 + extra_len);
+            extra_len = rb.len();
+            if (extra_len + j + 1) >= rb.get_capacity() {
+                rb.drop_first(extra_len);
+                extra_len = 0;
+            }
+        }
     }
 }
