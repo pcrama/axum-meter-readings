@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::mem::swap;
 
 pub struct RingBuffer<A> {
@@ -6,10 +7,6 @@ pub struct RingBuffer<A> {
     end: usize,
     capacity: usize,
 }
-
-// impl<A> Default for RingBuffer<A> {
-//     fn default() -> Self { new::<A>(10) }
-// }
 
 pub struct RingBufferView<A> {
     ring_buffer: RingBuffer<A>,
@@ -107,9 +104,9 @@ impl<A> RingBuffer<A> {
                 if self.end >= self.capacity {
                     self.end = 0
                 };
-                self.buffer[0] = val;
+                self.buffer[self.end] = val;
             }
-            self.end += 1;
+            self.end = (self.end + 1) % self.capacity;
             return None;
         }
     }
@@ -152,6 +149,27 @@ impl<A> RingBuffer<A> {
             }
             n -= 1;
         }
+    }
+}
+
+impl<A: Debug> RingBuffer<A> {
+    pub fn display(&self) {
+        print!("buf=");
+        for k in 0..self.buffer.len() {
+            if k == self.end {
+                print!("<");
+            }
+            if k == self.start {
+                print!(">");
+            } else {
+                print!(" ");
+            }
+            print!("{:?}", self.buffer[k]);
+        }
+        if self.end == self.buffer.len() {
+            print!("<");
+        }
+        println!(".");
     }
 }
 
@@ -450,6 +468,7 @@ mod tests {
 
     #[test]
     pub fn test_drop_first() {
+        let mut val = 8;
         let mut extra_len = 0;
         let mut rb = new::<usize>(10);
         rb.drop_first(5);
@@ -459,15 +478,40 @@ mod tests {
         for j in 3..8 {
             let mut k = j;
             while k > 0 {
-                rb.push(k);
+                rb.push(val);
+                let now_len = rb.len();
+                let rbv = freeze(rb);
+                assert_eq!(rbv.at(now_len), None);
+                rb = rbv.thaw();
                 k -= 1;
+                val += 1;
             }
             assert_eq!(rb.len(), j + extra_len);
+            let now_len = rb.len();
             let rbv = freeze(rb);
-            assert_eq!(rbv.at(extra_len), Some(j).as_ref());
+            let mut expected_val = val - 1;
+            assert_eq!(rbv.at(now_len), None);
+            k = now_len;
+            while k > 0 {
+                k -= 1;
+                assert_eq!(rbv.at(k), Some(expected_val).as_ref());
+                expected_val -= 1;
+            }
             rb = rbv.thaw();
             rb.drop_first(2);
             assert_eq!(rb.len(), j - 2 + extra_len);
+            let now_len = rb.len();
+            let rbv = freeze(rb);
+            assert_eq!(rbv.at(now_len), None);
+            let mut expected_val = val - 1;
+            assert_eq!(rbv.at(now_len), None);
+            k = now_len;
+            while k > 0 {
+                k -= 1;
+                assert_eq!(rbv.at(k), Some(expected_val).as_ref());
+                expected_val -= 1;
+            }
+            rb = rbv.thaw();
             rb.drop_first(1);
             assert_eq!(rb.len(), j - 3 + extra_len);
             extra_len = rb.len();
