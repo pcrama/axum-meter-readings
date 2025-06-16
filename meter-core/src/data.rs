@@ -1,5 +1,5 @@
-use std::fmt::Display;
-use std::io::{Read, Write};
+use std::fmt::{Display, Write as FmtWrite};
+use std::io::{Read, Write as StdIoWrite};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 
@@ -91,6 +91,54 @@ pub fn insert_data_202303(cmd: &str, meas: &Data202303) -> Result<usize, String>
             &some_val_to_sql(meas.gas_m3),
             &some_val_to_sql(meas.water_m3)).as_str());
     usize::from_str(&sql_output.trim()).map_err(|e| format!("{}", e))
+}
+
+pub fn insert_many_data_202303<I>(cmd: &str, data_iter: I) -> Result<usize, String>
+where
+    I: IntoIterator<Item = Data202303>,
+{
+    let mut sql = String::from(".mode list\nSELECT COUNT(*) FROM data_202303;\nBEGIN TRANSACTION;\n");
+    let mut inserted_any = false;
+
+    for meas in data_iter {
+        write!(
+            &mut sql,
+            "INSERT INTO data_202303 VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {});\n",
+            meas.timestamp,
+            some_val_to_sql(meas.pv2012_kWh),
+            some_val_to_sql(meas.pv2022_kWh),
+            some_val_to_sql(meas.peak_conso_kWh),
+            some_val_to_sql(meas.off_conso_kWh),
+            some_val_to_sql(meas.peak_inj_kWh),
+            some_val_to_sql(meas.off_inj_kWh),
+            some_val_to_sql(meas.gas_m3),
+            some_val_to_sql(meas.water_m3),
+        ).unwrap();
+        inserted_any = true;
+    }
+
+    if !inserted_any {
+        return Ok(0);
+    }
+
+    sql.push_str("COMMIT;\nSELECT COUNT(*) FROM data_202303;");
+
+    let sql_output = call_sqlite3(cmd, &sql);
+
+    // Expect two lines: one for initial count, one for final count
+    let lines: Vec<&str> = sql_output.lines().collect();
+    if lines.len() < 2 {
+        return Err(format!("Unexpected output from SQLite: '{}'", sql_output));
+    }
+
+    let first_line = lines[0].trim();
+    let before = first_line.parse::<usize>()
+        .map_err(|e| format!("Failed to parse initial count in '{}': {}", first_line, e))?;
+    let last_line = lines.last().unwrap().trim();
+    let after = last_line.parse::<usize>()
+        .map_err(|e| format!("Failed to parse final count in '{}': {}", last_line, e))?;
+
+    Ok(after - before)
 }
 
 fn some_str_to_result<B, C, F>(a: Option<&str>, f: F) -> Result<Option<B>, String>
@@ -317,5 +365,32 @@ mod tests {
             },
         );
         assert_eq!(result.unwrap(), 1234)
+    }
+
+    #[test]
+    fn can_insert_many_data_202303() {
+        let result = insert_many_data_202303(
+            "bash -c 'diff -w - <(cat <<EOF\n\
+.mode list\n\
+SELECT COUNT(*) FROM data_202303;\n\
+BEGIN TRANSACTION;\n\
+INSERT INTO data_202303 VALUES (1695485100, 50622.3, 3579.4, NULL, 630, 321, 1189.4, 28973.5, 867.5);\n\
+COMMIT;\n\
+SELECT COUNT(*) FROM data_202303;\n\
+EOF\n
+) && echo \"13\n14\"'",
+            [Data202303 {
+                timestamp: 1695485100,
+                pv2012_kWh: Some(50622.3),
+                pv2022_kWh: Some(3579.4),
+                peak_conso_kWh: None,
+                off_conso_kWh: Some(630.0),
+                peak_inj_kWh: Some(321.0),
+                off_inj_kWh: Some(1189.4),
+                gas_m3: Some(28973.5),
+                water_m3: Some(867.5),
+            }],
+        );
+        assert_eq!(result.unwrap(), 1)
     }
 }

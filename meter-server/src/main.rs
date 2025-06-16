@@ -17,7 +17,7 @@ use std::{
 use tokio::task;
 
 mod blocking_task;
-use blocking_task::{SharedState, poll_automated_measurements};
+use blocking_task::{SharedState, poll_automated_measurements, save_data};
 
 #[derive(Deserialize)]
 struct FormData {
@@ -118,11 +118,14 @@ async fn main() {
         .unwrap_or_else(|_| "cat /tmp/p1_data.txt".to_string());
     let pv_2022_cmd = env::var("AXUM_METER_READINGS_PV_2022_CMD")
         .unwrap_or_else(|_| "cat /tmp/pv_2022.json".to_string());
+    let sql_cmd = env::var("AXUM_METER_READINGS_SQL_CMD")
+        .unwrap_or_else(|_| "cat /tmp/sql_cmd.log".to_string());
     let blocking_ref = Arc::clone(&shared_state);
     let polling_period = Duration::from_secs(10);
     let _res = task::spawn_blocking(move || {
         println!("AXUM_METER_READINGS_P1_DATA_CMD='{}'", p1_data_cmd);
         println!("AXUM_METER_READINGS_PV_2022_CMD='{}'", pv_2022_cmd);
+        println!("AXUM_METER_READINGS_SQL_CMD='{}'", sql_cmd);
         loop {
             let start = Instant::now();
             let counter: i32;
@@ -133,15 +136,7 @@ async fn main() {
             }
             println!("counter={}", counter);
             let (p1, pv_2022) = poll_automated_measurements(&p1_data_cmd, &pv_2022_cmd);
-            {
-                let state = &mut blocking_ref.write().unwrap();
-                match state.set_data(p1, pv_2022) {
-                    Some(_) => {
-                        state.halve_data();
-                    }
-                    None => {}
-                }
-            }
+            save_data(&blocking_ref, p1, pv_2022, &sql_cmd);
             let elapsed = start.elapsed();
             if elapsed < polling_period {
                 thread::sleep(polling_period - elapsed);

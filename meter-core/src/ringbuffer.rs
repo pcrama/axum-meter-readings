@@ -41,6 +41,49 @@ impl<A> RingBufferView<A> {
     pub fn thaw(self) -> RingBuffer<A> {
         self.ring_buffer
     }
+
+    pub fn iter_limited<'a>(&'a self, limit: usize) -> RingBufferViewIter<'a, A> {
+        RingBufferViewIter {
+            buffer: &self.ring_buffer,
+            index: 0,
+            len: self.ring_buffer.len(),
+            limit: Some(limit),
+        }
+    }
+}
+
+impl<'a, A> IntoIterator for &'a RingBufferView<A> {
+    type Item = &'a A;
+    type IntoIter = RingBufferViewIter<'a, A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        RingBufferViewIter {
+            buffer: &self.ring_buffer,
+            index: 0,
+            len: self.ring_buffer.len(),
+            limit: None,
+        }
+    }
+}
+
+pub struct RingBufferViewIter<'a, A> {
+    buffer: &'a RingBuffer<A>,
+    index: usize,
+    len: usize,
+    limit: Option<usize>,
+}
+
+impl<'a, A> Iterator for RingBufferViewIter<'a, A> {
+    type Item = &'a A;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.len || self.limit.map_or(false, |l| self.index >= l) {
+            return None;
+        }
+        let idx = (self.buffer.start + self.index) % self.buffer.capacity;
+        self.index += 1;
+        self.buffer.buffer.get(idx)
+    }
 }
 
 impl<A> RingBuffer<A> {
@@ -520,5 +563,64 @@ mod tests {
                 extra_len = 0;
             }
         }
+    }
+
+    #[test]
+    fn test_ring_buffer_iter_all() {
+        let mut rb = new(5);
+        for i in 0..5 {
+            rb.push(i);
+        }
+        let view = freeze(rb);
+        let collected: Vec<_> = view.into_iter().cloned().collect();
+        assert_eq!(collected, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_ring_buffer_iter_limited() {
+        let mut rb = new(5);
+        for i in 0..5 {
+            rb.push(i);
+        }
+        let view = freeze(rb);
+        let collected: Vec<_> = view.iter_limited(3).cloned().collect();
+        assert_eq!(collected, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_ring_buffer_wraparound() {
+        let mut rb = new(5);
+        for i in 0..7 { // cause wraparound by inserting more data than can fit
+            rb.push(i);
+        }
+        let view = freeze(rb);
+        let collected: Vec<_> = view.into_iter().cloned().collect();
+        assert_eq!(collected, vec![2, 3, 4, 5, 6]);
+        let mut rb = view.thaw();
+        rb.drop_first(2);
+        let view = freeze(rb);
+        let collected: Vec<_> = view.into_iter().cloned().collect();
+        assert_eq!(collected, vec![4, 5, 6]);
+        let collected: Vec<_> = view.iter_limited(3).cloned().collect();
+        assert_eq!(collected, vec![4, 5, 6]);
+        let collected: Vec<_> = view.iter_limited(2).cloned().collect();
+        assert_eq!(collected, vec![4, 5]);
+        let mut rb = view.thaw();
+        rb.push(7);
+        let view = freeze(rb);
+        let collected: Vec<_> = view.into_iter().cloned().collect();
+        assert_eq!(collected, vec![4, 5, 6, 7]);
+        let collected: Vec<_> = view.iter_limited(3).cloned().collect();
+        assert_eq!(collected, vec![4, 5, 6]);
+        let collected: Vec<_> = view.iter_limited(20).cloned().collect();
+        assert_eq!(collected, vec![4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn test_ring_buffer_iter_empty() {
+        let rb = new::<i32>(5);
+        let view = freeze(rb);
+        let collected: Vec<_> = view.into_iter().cloned().collect();
+        assert!(collected.is_empty());
     }
 }

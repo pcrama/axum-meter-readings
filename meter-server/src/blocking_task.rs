@@ -93,6 +93,10 @@ impl AppState {
         })
     }
 
+    pub fn get_first_data(&self) -> Option<Data202303> {
+        self.data.peek_first(clone_data202303)
+    }
+
     pub fn get_last_data(&self) -> Option<Data202303> {
         self.data.peek_last(clone_data202303)
     }
@@ -137,6 +141,24 @@ pub fn poll_automated_measurements(
         }
     };
     (p1, pv_2022)
+}
+
+pub fn save_data(blocking_ref: &SharedState, p1: Option<CompleteP1Measurement>, pv_2022: Option<f64>, sql_cmd: &str) {
+    {
+        let state = &mut blocking_ref.write().unwrap();
+        match state.set_data(p1, pv_2022) {
+            Some(_) => {
+                state.halve_data();
+            }
+            None => {}
+        }
+        match (state.get_first_data(), state.get_last_data()) {
+            (Some(first), Some(last)) => if last.timestamp - first.timestamp > 3600 {
+                let mut inserted = 0;
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
