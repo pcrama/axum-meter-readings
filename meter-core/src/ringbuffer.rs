@@ -8,8 +8,8 @@ pub struct RingBuffer<A> {
     capacity: usize,
 }
 
-pub struct RingBufferView<A> {
-    ring_buffer: RingBuffer<A>,
+pub struct RingBufferView<'a, A> {
+    ring_buffer: &'a RingBuffer<A>,
 }
 
 pub fn new<A>(size: usize) -> RingBuffer<A> {
@@ -22,12 +22,12 @@ pub fn new<A>(size: usize) -> RingBuffer<A> {
     }
 }
 
-pub fn freeze<A>(ring_buffer: RingBuffer<A>) -> RingBufferView<A> {
+pub fn freeze<'a, A>(ring_buffer: &'a RingBuffer<A>) -> RingBufferView<'a, A> {
     RingBufferView { ring_buffer }
 }
 
-impl<A> RingBufferView<A> {
-    pub fn at<'a>(&'a self, idx: usize) -> Option<&'a A> {
+impl<'a, A> RingBufferView<'a, A> {
+    pub fn at(&'a self, idx: usize) -> Option<&'a A> {
         if idx >= self.ring_buffer.len() {
             return None;
         }
@@ -38,11 +38,7 @@ impl<A> RingBufferView<A> {
         return Some(&self.ring_buffer.buffer[idx]);
     }
 
-    pub fn thaw(self) -> RingBuffer<A> {
-        self.ring_buffer
-    }
-
-    pub fn iter_limited<'a>(&'a self, limit: usize) -> RingBufferViewIter<'a, A> {
+    pub fn iter_limited(&'a self, limit: usize) -> RingBufferViewIter<'a, A> {
         RingBufferViewIter {
             buffer: &self.ring_buffer,
             index: 0,
@@ -52,7 +48,7 @@ impl<A> RingBufferView<A> {
     }
 }
 
-impl<'a, A> IntoIterator for &'a RingBufferView<A> {
+impl<'a, A> IntoIterator for &'a RingBufferView<'a, A> {
     type Item = &'a A;
     type IntoIter = RingBufferViewIter<'a, A>;
 
@@ -193,6 +189,14 @@ impl<A> RingBuffer<A> {
             n -= 1;
         }
     }
+
+    pub fn with_limited_iter<R, F>(&mut self, limit: usize, f: F) -> R
+    where
+        F: FnOnce(RingBufferViewIter<'_, A>) -> R,
+    {
+        let frozen = freeze(self);
+        return f(frozen.iter_limited(limit));
+    }
 }
 
 impl<A: Debug> RingBuffer<A> {
@@ -311,20 +315,23 @@ mod tests {
         rb.halve_data();
         assert_eq!(rb.len(), 2);
         assert_eq!(rb.get_capacity(), 7);
-        let rbv = freeze(rb);
-        assert_eq!(rbv.at(0), Some(4).as_ref());
-        assert_eq!(rbv.at(1), Some(6).as_ref());
-        assert_eq!(rbv.at(2), None);
-        assert_eq!(rbv.at(3), None);
-        let mut rb = rbv.thaw();
+        {
+            let rbv = freeze(&rb);
+            assert_eq!(rbv.at(0), Some(4).as_ref());
+            assert_eq!(rbv.at(1), Some(6).as_ref());
+            assert_eq!(rbv.at(2), None);
+            assert_eq!(rbv.at(3), None);
+        }
         rb.halve_data();
         assert_eq!(rb.len(), 1);
         assert_eq!(rb.get_capacity(), 7);
-        let rbv = freeze(rb);
-        assert_eq!(rbv.at(0), Some(6).as_ref());
-        assert_eq!(rbv.at(1), None);
-        assert_eq!(rbv.at(2), None);
-        assert_eq!(rbv.at(3), None);
+        {
+            let rbv = freeze(&rb);
+            assert_eq!(rbv.at(0), Some(6).as_ref());
+            assert_eq!(rbv.at(1), None);
+            assert_eq!(rbv.at(2), None);
+            assert_eq!(rbv.at(3), None);
+        }
 
         let mut rb = new::<i32>(4);
         assert_eq!(rb.len(), 0);
@@ -339,16 +346,17 @@ mod tests {
         rb.halve_data();
         assert_eq!(rb.len(), 2);
         assert_eq!(rb.get_capacity(), 4);
-        let rbv = freeze(rb);
-        assert_eq!(rbv.at(0), Some(4).as_ref());
-        assert_eq!(rbv.at(1), Some(6).as_ref());
-        assert_eq!(rbv.at(2), None);
-        assert_eq!(rbv.at(3), None);
-        let mut rb = rbv.thaw();
+        {
+            let rbv = freeze(&rb);
+            assert_eq!(rbv.at(0), Some(4).as_ref());
+            assert_eq!(rbv.at(1), Some(6).as_ref());
+            assert_eq!(rbv.at(2), None);
+            assert_eq!(rbv.at(3), None);
+        }
         rb.halve_data();
         assert_eq!(rb.len(), 1);
         assert_eq!(rb.get_capacity(), 4);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(6).as_ref());
         assert_eq!(rbv.at(1), None);
         assert_eq!(rbv.at(2), None);
@@ -372,7 +380,7 @@ mod tests {
         rb.halve_data();
         assert_eq!(rb.len(), 2);
         assert_eq!(rb.get_capacity(), 7);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(4).as_ref());
         assert_eq!(rbv.at(1), Some(6).as_ref());
         assert_eq!(rbv.at(2), None);
@@ -397,7 +405,7 @@ mod tests {
         rb.halve_data();
         assert_eq!(rb.len(), 3);
         assert_eq!(rb.get_capacity(), 7);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(4).as_ref());
         assert_eq!(rbv.at(1), Some(6).as_ref());
         assert_eq!(rbv.at(2), Some(8).as_ref());
@@ -405,11 +413,10 @@ mod tests {
         assert_eq!(rbv.at(4), None);
         assert_eq!(rbv.at(5), None);
         assert_eq!(rbv.at(6), None);
-        let mut rb = rbv.thaw();
         rb.halve_data();
         assert_eq!(rb.len(), 1);
         assert_eq!(rb.get_capacity(), 7);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(6).as_ref());
         assert_eq!(rbv.at(1), None);
         assert_eq!(rbv.at(2), None);
@@ -422,16 +429,15 @@ mod tests {
         for i in 0..8 {
             rb.push(i);
         }
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         for i in 0..7 {
             // proof that rb = 1 2 3 4 5 6 7
             assert_eq!(rbv.at(i), Some(i + 1).as_ref());
         }
-        let mut rb = rbv.thaw();
         rb.halve_data(); // should be 2 4 6
         assert_eq!(rb.len(), 3);
         assert_eq!(rb.get_capacity(), 7);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(2).as_ref());
         assert_eq!(rbv.at(1), Some(4).as_ref());
         assert_eq!(rbv.at(2), Some(6).as_ref());
@@ -442,16 +448,15 @@ mod tests {
         for i in 0..15 {
             rb.push(i);
         }
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         for i in 0..8 {
             // proof that rb = 7 8 9 10 11 12 13 14
             assert_eq!(rbv.at(i), Some(i + 7).as_ref());
         }
-        let mut rb = rbv.thaw();
         rb.halve_data(); // should be 8 10 12 14
         assert_eq!(rb.len(), 4);
         assert_eq!(rb.get_capacity(), 8);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(8).as_ref());
         assert_eq!(rbv.at(1), Some(10).as_ref());
         assert_eq!(rbv.at(2), Some(12).as_ref());
@@ -461,48 +466,44 @@ mod tests {
 
     #[test]
     fn ringbuffer_freeze_and_thaw_overwrites_when_pushing_enough() {
-        let rbv = freeze(new::<i32>(3));
+        let mut rb = new::<i32>(3);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), None);
         assert_eq!(rbv.at(1), None);
         assert_eq!(rbv.at(2), None);
         assert_eq!(rbv.at(3), None);
         assert_eq!(rbv.at(4), None);
         assert_eq!(rbv.at(5), None);
-        let mut rb = rbv.thaw();
         assert_eq!(rb.push(3), None);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(3).as_ref());
         assert_eq!(rbv.at(1), None);
         assert_eq!(rbv.at(2), None);
         assert_eq!(rbv.at(3), None);
         assert_eq!(rbv.at(4), None);
         assert_eq!(rbv.at(5), None);
-        let mut rb = rbv.thaw();
         assert_eq!(rb.push(4), None);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(3).as_ref());
         assert_eq!(rbv.at(1), Some(4).as_ref());
         assert_eq!(rbv.at(2), None);
         assert_eq!(rbv.at(3), None);
-        let mut rb = rbv.thaw();
         assert_eq!(rb.push(5), None);
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(3).as_ref());
         assert_eq!(rbv.at(1), Some(4).as_ref());
         assert_eq!(rbv.at(2), Some(5).as_ref());
         assert_eq!(rbv.at(3), None);
         assert_eq!(rbv.at(4), None);
-        let mut rb = rbv.thaw();
         assert_eq!(rb.push(6), Some(3));
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(4).as_ref());
         assert_eq!(rbv.at(1), Some(5).as_ref());
         assert_eq!(rbv.at(2), Some(6).as_ref());
         assert_eq!(rbv.at(3), None);
         assert_eq!(rbv.at(4), None);
-        let mut rb = rbv.thaw();
         assert_eq!(rb.push(7), Some(4));
-        let rbv = freeze(rb);
+        let rbv = freeze(&rb);
         assert_eq!(rbv.at(0), Some(5).as_ref());
         assert_eq!(rbv.at(1), Some(6).as_ref());
         assert_eq!(rbv.at(2), Some(7).as_ref());
@@ -523,15 +524,14 @@ mod tests {
             while k > 0 {
                 rb.push(val);
                 let now_len = rb.len();
-                let rbv = freeze(rb);
+                let rbv = freeze(&rb);
                 assert_eq!(rbv.at(now_len), None);
-                rb = rbv.thaw();
                 k -= 1;
                 val += 1;
             }
             assert_eq!(rb.len(), j + extra_len);
             let now_len = rb.len();
-            let rbv = freeze(rb);
+            let rbv = freeze(&rb);
             let mut expected_val = val - 1;
             assert_eq!(rbv.at(now_len), None);
             k = now_len;
@@ -540,11 +540,10 @@ mod tests {
                 assert_eq!(rbv.at(k), Some(expected_val).as_ref());
                 expected_val -= 1;
             }
-            rb = rbv.thaw();
             rb.drop_first(2);
             assert_eq!(rb.len(), j - 2 + extra_len);
             let now_len = rb.len();
-            let rbv = freeze(rb);
+            let rbv = freeze(&rb);
             assert_eq!(rbv.at(now_len), None);
             let mut expected_val = val - 1;
             assert_eq!(rbv.at(now_len), None);
@@ -554,7 +553,6 @@ mod tests {
                 assert_eq!(rbv.at(k), Some(expected_val).as_ref());
                 expected_val -= 1;
             }
-            rb = rbv.thaw();
             rb.drop_first(1);
             assert_eq!(rb.len(), j - 3 + extra_len);
             extra_len = rb.len();
@@ -571,7 +569,7 @@ mod tests {
         for i in 0..5 {
             rb.push(i);
         }
-        let view = freeze(rb);
+        let view = freeze(&rb);
         let collected: Vec<_> = view.into_iter().cloned().collect();
         assert_eq!(collected, vec![0, 1, 2, 3, 4]);
     }
@@ -582,7 +580,7 @@ mod tests {
         for i in 0..5 {
             rb.push(i);
         }
-        let view = freeze(rb);
+        let view = freeze(&rb);
         let collected: Vec<_> = view.iter_limited(3).cloned().collect();
         assert_eq!(collected, vec![0, 1, 2]);
     }
@@ -590,24 +588,23 @@ mod tests {
     #[test]
     fn test_ring_buffer_wraparound() {
         let mut rb = new(5);
-        for i in 0..7 { // cause wraparound by inserting more data than can fit
+        for i in 0..7 {
+            // cause wraparound by inserting more data than can fit
             rb.push(i);
         }
-        let view = freeze(rb);
+        let view = freeze(&rb);
         let collected: Vec<_> = view.into_iter().cloned().collect();
         assert_eq!(collected, vec![2, 3, 4, 5, 6]);
-        let mut rb = view.thaw();
         rb.drop_first(2);
-        let view = freeze(rb);
+        let view = freeze(&rb);
         let collected: Vec<_> = view.into_iter().cloned().collect();
         assert_eq!(collected, vec![4, 5, 6]);
         let collected: Vec<_> = view.iter_limited(3).cloned().collect();
         assert_eq!(collected, vec![4, 5, 6]);
         let collected: Vec<_> = view.iter_limited(2).cloned().collect();
         assert_eq!(collected, vec![4, 5]);
-        let mut rb = view.thaw();
         rb.push(7);
-        let view = freeze(rb);
+        let view = freeze(&rb);
         let collected: Vec<_> = view.into_iter().cloned().collect();
         assert_eq!(collected, vec![4, 5, 6, 7]);
         let collected: Vec<_> = view.iter_limited(3).cloned().collect();
@@ -619,7 +616,7 @@ mod tests {
     #[test]
     fn test_ring_buffer_iter_empty() {
         let rb = new::<i32>(5);
-        let view = freeze(rb);
+        let view = freeze(&rb);
         let collected: Vec<_> = view.into_iter().cloned().collect();
         assert!(collected.is_empty());
     }

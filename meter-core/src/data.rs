@@ -93,11 +93,12 @@ pub fn insert_data_202303(cmd: &str, meas: &Data202303) -> Result<usize, String>
     usize::from_str(&sql_output.trim()).map_err(|e| format!("{}", e))
 }
 
-pub fn insert_many_data_202303<I>(cmd: &str, data_iter: I) -> Result<usize, String>
+pub fn insert_many_data_202303<'a, I>(cmd: &str, data_iter: I) -> Result<usize, String>
 where
-    I: IntoIterator<Item = Data202303>,
+    I: IntoIterator<Item = &'a Data202303>,
 {
-    let mut sql = String::from(".mode list\nSELECT COUNT(*) FROM data_202303;\nBEGIN TRANSACTION;\n");
+    let mut sql =
+        String::from(".mode list\nSELECT COUNT(*) FROM data_202303;\nBEGIN TRANSACTION;\n");
     let mut inserted_any = false;
 
     for meas in data_iter {
@@ -113,7 +114,8 @@ where
             some_val_to_sql(meas.off_inj_kWh),
             some_val_to_sql(meas.gas_m3),
             some_val_to_sql(meas.water_m3),
-        ).unwrap();
+        )
+        .unwrap();
         inserted_any = true;
     }
 
@@ -132,10 +134,12 @@ where
     }
 
     let first_line = lines[0].trim();
-    let before = first_line.parse::<usize>()
+    let before = first_line
+        .parse::<usize>()
         .map_err(|e| format!("Failed to parse initial count in '{}': {}", first_line, e))?;
     let last_line = lines.last().unwrap().trim();
-    let after = last_line.parse::<usize>()
+    let after = last_line
+        .parse::<usize>()
         .map_err(|e| format!("Failed to parse final count in '{}': {}", last_line, e))?;
 
     Ok(after - before)
@@ -379,7 +383,7 @@ COMMIT;\n\
 SELECT COUNT(*) FROM data_202303;\n\
 EOF\n
 ) && echo \"13\n14\"'",
-            [Data202303 {
+            [&Data202303 {
                 timestamp: 1695485100,
                 pv2012_kWh: Some(50622.3),
                 pv2022_kWh: Some(3579.4),
