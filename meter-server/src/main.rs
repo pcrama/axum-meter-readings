@@ -30,33 +30,23 @@ async fn get_form(State(state): State<SharedState>) -> Html<String> {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Number Form</title>
+            <title>Meter Form</title>
         </head>
         <body>
-            <h1>Enter an Integer</h1>
             <form action="/form" method="POST">
-                <label for="number">Number:</label>
-                <input type="number" id="number" name="number" required value="0">
+                <label for="timestamp">timestamp</label>
+                <input type="number" id="timestamp" name="timestamp" value="{}"><br>
+                <label for="pv2012_kWh">PV2012 (kWh)</label>
+                <input type="number" id="pv2012_kWh" name="pv2012_kWh"><br>
+                <label for="gas">gas (m³)</label>
+                <input type="number" id="gas" name="gas"><br>
+                <label for="water">water (m³)</label>
+                <input type="number" id="water" name="water"><br>
                 <button type="submit">Submit</button>
             </form>
-            {} {} {}
         </body>
         </html>"#,
-        state.data.len(),
-        match state
-            .data
-            .peek_first(|r| { format!("first {}", r.timestamp) })
-        {
-            Some(x) => x,
-            None => "".to_string(),
-        },
-        match state
-            .data
-            .peek_last(|r| { format!("last {}", r.timestamp) })
-        {
-            Some(x) => x,
-            None => "".to_string(),
-        },
+        time::now().strftime("%Y-%m-%d][%H:%M:%S").unwrap(),
     );
     Html(form.to_string())
 }
