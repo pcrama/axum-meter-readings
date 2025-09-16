@@ -1,4 +1,3 @@
-use axum::body::Bytes;
 use meter_core::{
     data::{Data202303, clone_data202303},
     p1_meter,
@@ -7,41 +6,27 @@ use meter_core::{
     ringbuffer::RingBuffer,
 };
 use std::{
-    collections::HashMap,
     io::{BufRead, BufReader},
     process::{Command, Stdio},
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-use time::{Date, Month, UtcOffset};
 
 pub type SharedState = Arc<RwLock<AppState>>;
 
 pub struct AppState {
-    pub db: HashMap<String, Bytes>,
-    counter: i32,
     pub data: RingBuffer<Data202303>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         AppState {
-            db: Default::default(),
-            counter: 0,
             data: ringbuffer::new::<Data202303>(1440),
         }
     }
 }
 
 impl AppState {
-    pub fn set_counter(&mut self, val: i32) {
-        self.counter = val;
-    }
-
-    pub fn get_counter(&self) -> i32 {
-        self.counter
-    }
-
     pub fn set_data(
         &mut self,
         p1: Option<CompleteP1Measurement>,
@@ -163,6 +148,7 @@ pub fn save_data(blocking_ref: &SharedState, p1: Option<CompleteP1Measurement>, 
 
 #[cfg(test)]
 mod tests {
+    use time::{Date, Month, UtcOffset};
     use super::*;
     const FAKE_PV_2022: &str = "echo '{\"result\":{\"0199-xxxxx9BD\":{\"6800_08822000\":{\"1\":[{\"validVals\":[9401,9402,9403,9404,9405],\"val\":[{\"tag\":9404}]}]},\"6800_10821E00\":{\"1\":[{\"val\":\"SN: xxxxxxx245\"}]},\"6800_08811F00\":{\"1\":[{\"validVals\":[1129,1130],\"val\":[{\"tag\":1129}]}]},\"6180_08214800\":{\"1\":[{\"val\":[{\"tag\":307}]}]},\"6180_08414900\":{\"1\":[{\"val\":[{\"tag\":886}]}]},\"6180_08522F00\":{\"1\":[{\"val\":[{\"tag\":16777213}]}]},\"6800_088A2900\":{\"1\":[{\"validVals\":[302,9327,9375,9376,9437,19043],\"val\":[{\"tag\":302}]}]},\"6100_40463600\":{\"1\":[{\"val\":null}]},\"6100_40463700\":{\"1\":[{\"val\":null}]},\"6100_40263F00\":{\"1\":[{\"val\":null}]},\"6400_00260100\":{\"1\":[{\"val\":7439043}]},\"6800_00832A00\":{\"1\":[{\"low\":5000,\"high\":5000,\"val\":5000}]},\"6800_008AA200\":{\"1\":[{\"low\":0,\"high\":null,\"val\":0}]},\"6400_00462500\":{\"1\":[{\"val\":null}]},\"6100_00418000\":{\"1\":[{\"val\":null}]},\"6800_08822B00\":{\"1\":[{\"validVals\":[461],\"val\":[{\"tag\":461}]}]},\"6100_0046C200\":{\"1\":[{\"val\":null}]},\"6400_0046C300\":{\"1\":[{\"val\":7459043}]},\"6802_08834500\":{\"1\":[{\"validVals\":[303,1439],\"val\":[{\"tag\":1439}]}]},\"6180_08412800\":{\"1\":[{\"val\":[{\"tag\":16777213}]}]}}}}'";
     const FAKE_P1: &str = "echo '0-0:1.0.0(241025000000S)'; echo '1-0:1.8.1(002654.919*kWh)'; echo '1-0:1.8.2(002420.293*kWh)'; echo '1-0:2.8.1(006254.732*kWh)'; echo '1-0:2.8.2(002457.202*kWh)';";

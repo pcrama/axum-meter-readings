@@ -1,11 +1,9 @@
 use axum::{
     Router,
-    body::Bytes,
-    extract::{Form, Path, State},
+    extract::{Form, State},
     handler::Handler,
-    http::StatusCode,
     response::Html,
-    routing::{delete, get, get_service},
+    routing::get_service,
 };
 use serde::Deserialize;
 use std::{
@@ -38,13 +36,12 @@ async fn get_form(State(state): State<SharedState>) -> Html<String> {
             <h1>Enter an Integer</h1>
             <form action="/form" method="POST">
                 <label for="number">Number:</label>
-                <input type="number" id="number" name="number" required value="{}">
+                <input type="number" id="number" name="number" required value="0">
                 <button type="submit">Submit</button>
             </form>
             {} {} {}
         </body>
         </html>"#,
-        state.get_counter(),
         state.data.len(),
         match state
             .data
@@ -68,10 +65,6 @@ async fn post_form(
     State(state): State<SharedState>,
     Form(form_data): Form<FormData>,
 ) -> Html<String> {
-    {
-        let state = &mut state.write().unwrap();
-        state.set_counter(form_data.number);
-    }
     println!("Form submitted with number: {}", form_data.number);
     let state = state.read().unwrap();
     let format_kwh = |x: Option<f64>, y: &str| {
@@ -128,13 +121,6 @@ async fn main() {
         println!("AXUM_METER_READINGS_SQL_CMD='{}'", sql_cmd);
         loop {
             let start = Instant::now();
-            let counter: i32;
-            {
-                let state = &mut blocking_ref.write().unwrap();
-                counter = state.get_counter() + 1;
-                state.set_counter(counter);
-            }
-            println!("counter={}", counter);
             let (p1, pv_2022) = poll_automated_measurements(&p1_data_cmd, &pv_2022_cmd);
             save_data(&blocking_ref, p1, pv_2022, &sql_cmd);
             let elapsed = start.elapsed();
@@ -157,13 +143,6 @@ async fn main() {
             get_service(get_form.with_state(Arc::clone(&shared_state)))
                 .post_service(post_form.with_state(Arc::clone(&shared_state))),
         )
-        .route(
-            "/access/{key}",
-            get(kv_get).post_service(kv_set.with_state(Arc::clone(&shared_state))),
-        )
-        .route("/keys", get(list_keys))
-        // Nest our admin routes under `/admin`
-        .nest("/admin", admin_routes())
         .with_state(Arc::clone(&shared_state));
 
     // Run our app with hyper
@@ -172,51 +151,4 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(bind_addr).await.unwrap();
     println!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
-}
-
-async fn kv_get(
-    Path(key): Path<String>,
-    State(state): State<SharedState>,
-) -> Result<Bytes, StatusCode> {
-    let state = &state.read().unwrap();
-
-    if key == "counter" {
-        let counter_string = state.get_counter().to_string();
-        let bytes = counter_string.as_bytes();
-        println!("Getting counter {}", state.get_counter());
-        return Ok(bytes.to_vec().into());
-    }
-
-    if let Some(value) = state.db.get(&key) {
-        Ok(value.clone())
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
-}
-
-async fn kv_set(Path(key): Path<String>, State(state): State<SharedState>, bytes: Bytes) {
-    state.write().unwrap().db.insert(key, bytes);
-}
-
-async fn list_keys(State(state): State<SharedState>) -> String {
-    let db = &state.read().unwrap().db;
-
-    db.keys()
-        .map(|key| key.to_string())
-        .collect::<Vec<String>>()
-        .join("\n")
-}
-
-fn admin_routes() -> Router<SharedState> {
-    async fn delete_all_keys(State(state): State<SharedState>) {
-        state.write().unwrap().db.clear();
-    }
-
-    async fn remove_key(Path(key): Path<String>, State(state): State<SharedState>) {
-        state.write().unwrap().db.remove(&key);
-    }
-
-    Router::new()
-        .route("/keys", delete(delete_all_keys))
-        .route("/key/{key}", delete(remove_key))
 }
