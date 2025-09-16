@@ -5,6 +5,7 @@ use axum::{
     response::Html,
     routing::get_service,
 };
+use chrono;
 use serde::Deserialize;
 use std::{
     env,
@@ -35,7 +36,7 @@ async fn get_form(State(state): State<SharedState>) -> Html<String> {
         <body>
             <form action="/form" method="POST">
                 <label for="timestamp">timestamp</label>
-                <input type="number" id="timestamp" name="timestamp" value="{}"><br>
+                <input type="text" id="timestamp" name="timestamp" value="{}"><br>
                 <label for="pv2012_kWh">PV2012 (kWh)</label>
                 <input type="number" id="pv2012_kWh" name="pv2012_kWh"><br>
                 <label for="gas">gas (m³)</label>
@@ -44,9 +45,13 @@ async fn get_form(State(state): State<SharedState>) -> Html<String> {
                 <input type="number" id="water" name="water"><br>
                 <button type="submit">Submit</button>
             </form>
+            <br>
+            {} input measurements
         </body>
         </html>"#,
-        time::now().strftime("%Y-%m-%d][%H:%M:%S").unwrap(),
+        // RFC3339-like format, floor-ed to previous full minute
+        chrono::Local::now().format("%Y-%m-%dT%H:%M:00%:z"),
+        state.data.len(),
     );
     Html(form.to_string())
 }

@@ -36,7 +36,7 @@ impl AppState {
         }
 
         let timestamp = match &p1 {
-            Some(p1) => p1.timestamp.unix_timestamp(),
+            Some(p1) => p1.timestamp.timestamp(),
             None => SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -151,7 +151,7 @@ pub fn save_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::{Date, Duration, Month, UtcOffset};
+    use chrono::{Duration, TimeZone, Utc};
     const FAKE_PV_2022: &str = "echo '{\"result\":{\"0199-xxxxx9BD\":{\"6800_08822000\":{\"1\":[{\"validVals\":[9401,9402,9403,9404,9405],\"val\":[{\"tag\":9404}]}]},\"6800_10821E00\":{\"1\":[{\"val\":\"SN: xxxxxxx245\"}]},\"6800_08811F00\":{\"1\":[{\"validVals\":[1129,1130],\"val\":[{\"tag\":1129}]}]},\"6180_08214800\":{\"1\":[{\"val\":[{\"tag\":307}]}]},\"6180_08414900\":{\"1\":[{\"val\":[{\"tag\":886}]}]},\"6180_08522F00\":{\"1\":[{\"val\":[{\"tag\":16777213}]}]},\"6800_088A2900\":{\"1\":[{\"validVals\":[302,9327,9375,9376,9437,19043],\"val\":[{\"tag\":302}]}]},\"6100_40463600\":{\"1\":[{\"val\":null}]},\"6100_40463700\":{\"1\":[{\"val\":null}]},\"6100_40263F00\":{\"1\":[{\"val\":null}]},\"6400_00260100\":{\"1\":[{\"val\":7439043}]},\"6800_00832A00\":{\"1\":[{\"low\":5000,\"high\":5000,\"val\":5000}]},\"6800_008AA200\":{\"1\":[{\"low\":0,\"high\":null,\"val\":0}]},\"6400_00462500\":{\"1\":[{\"val\":null}]},\"6100_00418000\":{\"1\":[{\"val\":null}]},\"6800_08822B00\":{\"1\":[{\"validVals\":[461],\"val\":[{\"tag\":461}]}]},\"6100_0046C200\":{\"1\":[{\"val\":null}]},\"6400_0046C300\":{\"1\":[{\"val\":7459043}]},\"6802_08834500\":{\"1\":[{\"validVals\":[303,1439],\"val\":[{\"tag\":1439}]}]},\"6180_08412800\":{\"1\":[{\"val\":[{\"tag\":16777213}]}]}}}}'";
     const FAKE_P1: &str = "echo '0-0:1.0.0(241025000000S)'; echo '1-0:1.8.1(002654.919*kWh)'; echo '1-0:1.8.2(002420.293*kWh)'; echo '1-0:2.8.1(006254.732*kWh)'; echo '1-0:2.8.2(002457.202*kWh)';";
     #[test]
@@ -176,10 +176,7 @@ mod tests {
             poll_automated_measurements(FAKE_P1, "echo B"),
             (
                 Some(CompleteP1Measurement {
-                    timestamp: Date::from_calendar_date(2024, Month::October, 25)
-                        .unwrap()
-                        .midnight()
-                        .assume_offset(UtcOffset::from_hms(2, 0, 0).unwrap()),
+                    timestamp: Utc.with_ymd_and_hms(2024, 10, 24, 22, 0, 0).unwrap(),
                     peak_hour_consumption: 2654.919,
                     off_hour_consumption: 2420.293,
                     peak_hour_injection: 6254.732,
@@ -196,10 +193,7 @@ mod tests {
             poll_automated_measurements(FAKE_P1, FAKE_PV_2022),
             (
                 Some(CompleteP1Measurement {
-                    timestamp: Date::from_calendar_date(2024, Month::October, 25)
-                        .unwrap()
-                        .midnight()
-                        .assume_offset(UtcOffset::from_hms(2, 0, 0).unwrap()),
+                    timestamp: Utc.with_ymd_and_hms(2024, 10, 24, 22, 0, 0).unwrap(),
                     peak_hour_consumption: 2654.919,
                     off_hour_consumption: 2420.293,
                     peak_hour_injection: 6254.732,
@@ -213,10 +207,7 @@ mod tests {
     #[test]
     fn save_data_flushes_when_more_than_1h_of_data() {
         let state: SharedState = Arc::new(RwLock::new(AppState::default()));
-        let mut timestamp = Date::from_calendar_date(2024, Month::October, 25)
-            .unwrap()
-            .midnight()
-            .assume_offset(UtcOffset::from_hms(2, 0, 0).unwrap());
+        let mut timestamp = Utc.with_ymd_and_hms(2024, 10, 25, 2, 0, 0).unwrap();
 
         // Insert the first record
         save_data(
@@ -280,7 +271,7 @@ mod tests {
         let first_opt = first_opt.unwrap();
         let last_opt = last_opt.unwrap();
         assert_eq!(first_opt.pv2022_kWh, Some(5681.0));
-        assert_eq!(last_opt.timestamp, timestamp.unix_timestamp());
+        assert_eq!(last_opt.timestamp, timestamp.timestamp());
         assert_eq!(last_opt.pv2022_kWh, Some(6789.0));
     }
 }

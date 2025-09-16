@@ -1,8 +1,8 @@
+use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use std::borrow::Borrow;
 use std::error::Error;
 use std::num::ParseFloatError;
 use std::str::FromStr;
-use time::{Date, Month, OffsetDateTime, UtcOffset};
 
 // 0-0:1.0.0(241025191816S)
 //
@@ -29,7 +29,7 @@ fn parse_kwh(line: &str, prefix: &str) -> Result<Option<f64>, ParseFloatError> {
     }
 }
 
-fn parse_date_time(line: &str) -> Result<Option<OffsetDateTime>, Box<dyn Error>> {
+fn parse_date_time(line: &str) -> Result<Option<DateTime<Utc>>, Box<dyn Error>> {
     const DATA_LEN: usize = 13;
     match strip_prefix_and_suffix(line, "0-0:1.0.0(", ")") {
         Some(yymmddhhmmssx) => {
@@ -40,24 +40,28 @@ fn parse_date_time(line: &str) -> Result<Option<OffsetDateTime>, Box<dyn Error>>
                     .map(|summer_or_winter| summer_or_winter == 'S' || summer_or_winter == 'W')
                     .unwrap_or(false)
             {
-                let yy = i32::from_str(&yymmddhhmmssx[0..2])?;
-                let mm = Month::try_from(u8::from_str(&yymmddhhmmssx[2..4])?)?;
-                let dd = u8::from_str(&yymmddhhmmssx[4..6])?;
-                let hours = u8::from_str(&yymmddhhmmssx[6..8])?;
-                let mins = u8::from_str(&yymmddhhmmssx[8..10])?;
-                let secs = u8::from_str(&yymmddhhmmssx[10..12])?;
-                let date = Date::from_calendar_date(2000 + yy, mm, dd)?;
-                let datetime = date.with_hms(hours, mins, secs)?;
-                let datetime = datetime.assume_offset(UtcOffset::from_hms(
-                    if yymmddhhmmssx.chars().nth(12).unwrap_or('?') == 'S' {
-                        2
+                let yy = 2000 + i32::from_str(&yymmddhhmmssx[0..2])?;
+                let mm = u32::from_str(&yymmddhhmmssx[2..4])?;
+                let dd = u32::from_str(&yymmddhhmmssx[4..6])?;
+                let hours = u32::from_str(&yymmddhhmmssx[6..8])?;
+                let mins = u32::from_str(&yymmddhhmmssx[8..10])?;
+                let secs = u32::from_str(&yymmddhhmmssx[10..12])?;
+                let offset = FixedOffset::east_opt(
+                    (if yymmddhhmmssx.chars().nth(12).unwrap_or('?') == 'S' {
+                        2 // Central European Summer Time
                     } else {
-                        1
-                    },
-                    0,
-                    0,
-                )?);
-                Ok(Some(datetime))
+                        1 // Central European Time
+                    }) * 3600,
+                )
+                .unwrap();
+                if let Some(datetime) = offset
+                    .with_ymd_and_hms(yy, mm, dd, hours, mins, secs)
+                    .single()
+                {
+                    Ok(Some(datetime.to_utc()))
+                } else {
+                    Err("Unable to build datetime object from P1 0-0:1.0.0".into())
+                }
             } else {
                 Ok(None) // I should (but am not going to) define an error type here
             }
@@ -69,7 +73,6 @@ fn parse_date_time(line: &str) -> Result<Option<OffsetDateTime>, Box<dyn Error>>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::Duration;
 
     #[test]
     fn strip_prefix_and_suffix_prefix_mismatch_expect_none() {
@@ -122,15 +125,11 @@ mod tests {
 
     #[test]
     fn parse_date_time_good_date_returned_daylight_saving_time() {
-        let datetime = parse_date_time("0-0:1.0.0(240825191816S)")
+        let datetime = parse_date_time("0-0:1.0.0(240815191816S)")
             .expect("Some(date) expected here")
             .expect("date expected here");
-        let expected = Date::from_calendar_date(2024, Month::August, 25)
-            .unwrap()
-            .with_hms(17, 18, 16)
-            .unwrap()
-            .assume_offset(UtcOffset::UTC);
-        assert_eq!(datetime - expected, Duration::ZERO);
+        let expected = Utc.with_ymd_and_hms(2024, 8, 15, 17, 18, 16).unwrap();
+        assert_eq!(datetime, expected);
     }
 
     #[test]
@@ -138,12 +137,8 @@ mod tests {
         let datetime = parse_date_time("0-0:1.0.0(231222191618W)")
             .expect("Some(date) expected here")
             .expect("date expected here");
-        let expected = Date::from_calendar_date(2023, Month::December, 22)
-            .unwrap()
-            .with_hms(18, 16, 18)
-            .unwrap()
-            .assume_offset(UtcOffset::UTC);
-        assert_eq!(datetime - expected, Duration::ZERO);
+        let expected = Utc.with_ymd_and_hms(2023, 12, 22, 18, 16, 18).unwrap();
+        assert_eq!(datetime, expected);
     }
 
     #[test]
@@ -175,15 +170,15 @@ mod tests {
     fn parse_lines_happy_path() {
         assert_eq!(
             parse_lines("\n0-0:1.0.0(241025000000S)\n\n1-0:1.8.1(002654.919*kWh)\n\n1-0:1.8.2(002420.293*kWh)\n\n1-0:2.8.1(006254.732*kWh)\n\n1-0:2.8.2(002457.202*kWh)".lines()).expect("Ok(some meas) expected here"),
-            Some(CompleteP1Measurement { timestamp: Date::from_calendar_date(2024, Month::October, 25).unwrap().midnight().assume_offset(UtcOffset::from_hms(2,0,0).unwrap()), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
+            Some(CompleteP1Measurement { timestamp: Utc.with_ymd_and_hms(2024, 10, 24, 22, 0, 0).unwrap(), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
         )
     }
 
     #[test]
     fn parse_lines_skips_suffix_of_previous_datagram() {
         assert_eq!(
-            parse_lines(".1(000054.732*kWh)\n\n1-0:2.8.2(000057.202*kWh)\n\n0-0:1.0.0(241025000000S)\n\n1-0:1.8.1(002654.919*kWh)\n\n1-0:1.8.2(002420.293*kWh)\n\n1-0:2.8.1(006254.732*kWh)\n\n1-0:2.8.2(002457.202*kWh)".lines()).expect("Ok(some meas) expected here"),
-            Some(CompleteP1Measurement { timestamp: Date::from_calendar_date(2024, Month::October, 25).unwrap().midnight().assume_offset(UtcOffset::from_hms(2,0,0).unwrap()), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
+            parse_lines(".1(000054.732*kWh)\n\n1-0:2.8.2(000057.202*kWh)\n\n0-0:1.0.0(241025020000S)\n\n1-0:1.8.1(002654.919*kWh)\n\n1-0:1.8.2(002420.293*kWh)\n\n1-0:2.8.1(006254.732*kWh)\n\n1-0:2.8.2(002457.202*kWh)".lines()).expect("Ok(some meas) expected here"),
+            Some(CompleteP1Measurement { timestamp: Utc.with_ymd_and_hms(2024, 10, 25, 0,0,0).unwrap(), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
         )
     }
 
@@ -191,14 +186,14 @@ mod tests {
     fn parse_lines_returns_first_full_datagram() {
         assert_eq!(
             parse_lines(".1(000054.732*kWh)\n\n1-0:2.8.2(000057.202*kWh)\n\n0-0:1.0.0(241025000000S)\n\n1-0:1.8.1(002654.919*kWh)\n\n1-0:1.8.2(002420.293*kWh)\n\n1-0:2.8.1(006254.732*kWh)\n\n1-0:2.8.2(002457.202*kWh)\n\n0-0:1.0.0(251126000000W)\n\n1-0:1.8.1(992654.919*kWh)\n\n1-0:1.8.2(992420.293*kWh)\n\n1-0:2.8.1(996254.732*kWh)\n\n1-0:2.8.2(992457.202*kWh)".lines()).expect("Ok(some meas) expected here"),
-            Some(CompleteP1Measurement { timestamp: Date::from_calendar_date(2024, Month::October, 25).unwrap().midnight().assume_offset(UtcOffset::from_hms(2,0,0).unwrap()), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
+            Some(CompleteP1Measurement { timestamp: Utc.with_ymd_and_hms(2024, 10, 24, 22,0,0).unwrap(), peak_hour_consumption: 2654.919, off_hour_consumption: 2420.293, peak_hour_injection: 6254.732, off_hour_injection: 2457.202 }),
         )
     }
 }
 
 #[derive(PartialEq, Debug)]
 struct PartialP1Measurement {
-    timestamp: Option<OffsetDateTime>,
+    timestamp: Option<DateTime<Utc>>,
     peak_hour_consumption: Option<f64>,
     off_hour_consumption: Option<f64>,
     peak_hour_injection: Option<f64>,
@@ -207,7 +202,7 @@ struct PartialP1Measurement {
 
 #[derive(PartialEq, Debug)]
 pub struct CompleteP1Measurement {
-    pub timestamp: OffsetDateTime,
+    pub timestamp: DateTime<Utc>,
     pub peak_hour_consumption: f64,
     pub off_hour_consumption: f64,
     pub peak_hour_injection: f64,
