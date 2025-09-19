@@ -229,16 +229,20 @@ async fn main() {
         .unwrap_or_else(|_| "cat /tmp/pv_2022.json".to_string());
     let sql_cmd = env::var("AXUM_METER_READINGS_SQL_CMD")
         .unwrap_or_else(|_| "cat /tmp/sql_cmd.log".to_string());
+    let dump_interval = env::var("AXUM_METER_READINGS_DUMP_INTERVAL")
+        .map_or(None, |s| s.parse::<i64>().ok())
+        .unwrap_or(3600);
     let blocking_ref = Arc::clone(&shared_state);
     let polling_period = Duration::from_secs(10);
     let _res = task::spawn_blocking(move || {
         println!("AXUM_METER_READINGS_P1_DATA_CMD='{}'", p1_data_cmd);
         println!("AXUM_METER_READINGS_PV_2022_CMD='{}'", pv_2022_cmd);
         println!("AXUM_METER_READINGS_SQL_CMD='{}'", sql_cmd);
+        println!("AXUM_METER_READINGS_DUMP_INTERVAL='{}'", dump_interval);
         loop {
             let start = Instant::now();
             let (p1, pv_2022) = poll_automated_measurements(&p1_data_cmd, &pv_2022_cmd);
-            save_data(&blocking_ref, p1, pv_2022, &sql_cmd);
+            save_data(&blocking_ref, p1, pv_2022, &sql_cmd, dump_interval);
             let elapsed = start.elapsed();
             if elapsed < polling_period {
                 thread::sleep(polling_period - elapsed);

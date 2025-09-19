@@ -133,13 +133,14 @@ pub fn save_data(
     p1: Option<CompleteP1Measurement>,
     pv_2022: Option<f64>,
     sql_cmd: &str,
+    dump_interval: i64,
 ) {
     let state = &mut blocking_ref.write().unwrap();
     if let Some(_) = state.set_data(p1, pv_2022) {
         state.halve_data();
     }
     if let (Some(first), Some(last)) = (state.get_first_data(), state.get_last_data()) {
-        if last.timestamp - first.timestamp > 3600 {
+        if last.timestamp - first.timestamp > dump_interval {
             match insert_many_data_202303(sql_cmd, freeze(&state.data).iter_limited(100)) {
                 Ok(n) if n > 0 => state.data.drop_first(n),
                 Ok(_) => println!("No error but no data saved either"),
@@ -323,6 +324,7 @@ mod tests {
             }),
             Some(1234.0),
             "echo dontcallmenow; exit 123",
+            3600,
         );
 
         assert_eq!(state.read().unwrap().data.len(), 1);
@@ -341,6 +343,7 @@ mod tests {
                 }),
                 Some(5678.0 + (i as f64)),
                 &format!("echo dontcallmenow; exit 1{}4", i),
+                3600,
             );
         }
 
@@ -359,6 +362,7 @@ mod tests {
             }),
             Some(6789.0),
             "echo 10; echo 14",
+            3600,
         );
 
         // After flushing, the buffer should have dropped 14-10==4 entries
