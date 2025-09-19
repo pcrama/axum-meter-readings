@@ -1,13 +1,14 @@
+use chrono::{DateTime, FixedOffset};
 use meter_core::{
     data::{Data202303, clone_data202303, insert_many_data_202303},
     p1_meter::{self, CompleteP1Measurement},
     pv2022,
-    ringbuffer::{self, RingBuffer, freeze},
+    ringbuffer::{self, RingBuffer, RingBufferView, freeze},
 };
 use std::{
     io::{BufRead, BufReader},
     process::{Command, Stdio},
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockWriteGuard},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -148,6 +149,107 @@ pub fn save_data(
     }
 }
 
+pub fn save_manual_inputs(
+    state: &mut RwLockWriteGuard<'_, AppState>,
+    timestamp: DateTime<FixedOffset>,
+    #[allow(non_snake_case)] pv2012_kWh: Option<f64>,
+    gas_m3: Option<f64>,
+    water_m3: Option<f64>,
+) {
+    let len = state.data.len();
+    let timestamp = timestamp.timestamp();
+    match state.data.with_view(
+        |vw: RingBufferView<'_, Data202303>| -> Result<(usize, Data202303), usize> {
+            if len == 0 {
+                return Err(0);
+            }
+            let mut left = 0;
+            let mut right = vw.len();  // *NOT* len-1 because mid-point is biased towards left through integer division
+            let mut best: Option<(usize, Data202303)> = None;
+            let mut mid: usize;
+            let mut old_mid = right;
+            while {
+                mid = (left + right) / 2;
+                if let Some(elt) = vw.at(mid) {
+                    let elt_diff = (elt.timestamp - timestamp).abs();
+                    if elt_diff <= 60 {
+                        if best.as_ref().map_or(
+                            true,
+                            |(
+                                _,
+                                Data202303 {
+                                    timestamp: best_ts, ..
+                                },
+                            )| {
+                                let best_diff = (best_ts - timestamp).abs();
+                                best_diff > elt_diff
+                                    // If same distance, prefer earlier (on account that the human took some time to fill it in manually)
+                                    || ((best_diff == elt_diff) && (best_ts > &elt.timestamp))},
+                        ) {
+                            best = Some((mid, clone_data202303(elt)));
+                        }
+                    }
+                    if elt.timestamp < timestamp {
+                        left = mid;
+                    } else {
+                        right = mid;
+                    }
+                } else {
+                    panic!("Not reached1: we should only look inside the correct range. left={} mid={} right={} len={}", left, mid, right, len);
+                }
+                left < right && mid != old_mid
+            } {
+                old_mid = mid;
+            };
+            if let Some(best) = best {
+                return Ok(best);
+            }
+            if let Some(Data202303 { timestamp: ts, .. }) = vw.at(left) {
+                if *ts < timestamp {
+                    Err(left + 1)
+                } else {
+                    Err(left)
+                }
+            } else {
+                panic!("Not reached2: we should only look inside the correct range. left={} mid={} right={} len={}", left, mid, right, len);
+            }
+        },
+    ) {
+        Ok((idx, existing_data)) => {
+            state.data.replace(
+                idx,
+                Data202303 {
+                    timestamp: existing_data.timestamp,
+                    pv2012_kWh,
+                    pv2022_kWh: existing_data.pv2022_kWh,
+                    peak_conso_kWh: existing_data.peak_conso_kWh,
+                    off_conso_kWh: existing_data.off_conso_kWh,
+                    peak_inj_kWh: existing_data.peak_inj_kWh,
+                    off_inj_kWh: existing_data.off_inj_kWh,
+                    gas_m3,
+                    water_m3,
+                },
+            );
+        }
+        Err(idx) => {
+            state.data.insert_at(
+                idx,
+                Data202303 {
+                    timestamp,
+                    pv2012_kWh,
+                    pv2022_kWh: None,
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3,
+                    water_m3,
+                },
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +375,562 @@ mod tests {
         assert_eq!(first_opt.pv2022_kWh, Some(5681.0));
         assert_eq!(last_opt.timestamp, timestamp.timestamp());
         assert_eq!(last_opt.pv2022_kWh, Some(6789.0));
+    }
+
+    #[test]
+    fn save_manual_inputs_enrich_existing_data() {
+        let state: SharedState = Arc::new(RwLock::new(AppState::default()));
+        let mut w = state.write().unwrap();
+        w.data.push(Data202303 {
+            timestamp: 1000,
+            pv2012_kWh: None,
+            pv2022_kWh: Some(123.45),
+            peak_conso_kWh: Some(234.56),
+            off_conso_kWh: Some(345.67),
+            peak_inj_kWh: Some(456.78),
+            off_inj_kWh: Some(567.89),
+            gas_m3: None,
+            water_m3: None,
+        });
+        w.data.push(Data202303 {
+            timestamp: 1045,
+            pv2012_kWh: None,
+            pv2022_kWh: Some(23.45),
+            peak_conso_kWh: Some(34.56),
+            off_conso_kWh: Some(45.67),
+            peak_inj_kWh: Some(56.78),
+            off_inj_kWh: Some(67.89),
+            gas_m3: None,
+            water_m3: None,
+        });
+        w.data.push(Data202303 {
+            timestamp: 1062,
+            pv2012_kWh: None,
+            pv2022_kWh: Some(234.5),
+            peak_conso_kWh: Some(345.6),
+            off_conso_kWh: Some(456.7),
+            peak_inj_kWh: Some(567.8),
+            off_inj_kWh: Some(678.9),
+            gas_m3: None,
+            water_m3: None,
+        });
+        w.data.push(Data202303 {
+            timestamp: 1118,
+            pv2012_kWh: None,
+            pv2022_kWh: Some(2.345),
+            peak_conso_kWh: Some(3.456),
+            off_conso_kWh: Some(4.567),
+            peak_inj_kWh: Some(5.678),
+            off_inj_kWh: Some(6.789),
+            gas_m3: None,
+            water_m3: None,
+        });
+        w.data.push(Data202303 {
+            timestamp: 2000,
+            pv2012_kWh: Some(111.0),
+            pv2022_kWh: None,
+            peak_conso_kWh: None,
+            off_conso_kWh: None,
+            peak_inj_kWh: None,
+            off_inj_kWh: None,
+            gas_m3: None,
+            water_m3: None,
+        });
+        save_manual_inputs(
+            &mut w,
+            DateTime::from_timestamp_nanos(1060 * 1_000_000_000).into(),
+            Some(2.0),
+            Some(3.0),
+            Some(4.0),
+        );
+        w.data.with_view(|vw| {
+            assert_eq!(
+                vw.into_iter().map(clone_data202303).collect::<Vec<_>>(),
+                vec![
+                    Data202303 {
+                        timestamp: 1000,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(123.45),
+                        peak_conso_kWh: Some(234.56),
+                        off_conso_kWh: Some(345.67),
+                        peak_inj_kWh: Some(456.78),
+                        off_inj_kWh: Some(567.89),
+                        gas_m3: None,
+                        water_m3: None
+                    },
+                    Data202303 {
+                        timestamp: 1045,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(23.45),
+                        peak_conso_kWh: Some(34.56),
+                        off_conso_kWh: Some(45.67),
+                        peak_inj_kWh: Some(56.78),
+                        off_inj_kWh: Some(67.89),
+                        gas_m3: None,
+                        water_m3: None
+                    },
+                    Data202303 {
+                        timestamp: 1062,
+                        pv2012_kWh: Some(2.0),
+                        pv2022_kWh: Some(234.5),
+                        peak_conso_kWh: Some(345.6),
+                        off_conso_kWh: Some(456.7),
+                        peak_inj_kWh: Some(567.8),
+                        off_inj_kWh: Some(678.9),
+                        gas_m3: Some(3.0),
+                        water_m3: Some(4.0)
+                    },
+                    Data202303 {
+                        timestamp: 1118,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(2.345),
+                        peak_conso_kWh: Some(3.456),
+                        off_conso_kWh: Some(4.567),
+                        peak_inj_kWh: Some(5.678),
+                        off_inj_kWh: Some(6.789),
+                        gas_m3: None,
+                        water_m3: None
+                    },
+                    Data202303 {
+                        timestamp: 2000,
+                        pv2012_kWh: Some(111.0),
+                        pv2022_kWh: None,
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None
+                    },
+                ]
+            )
+        })
+    }
+
+    #[test]
+    fn save_manual_inputs_parameterized() {
+        struct Case {
+            name: &'static str,
+            existing: Vec<Data202303>,
+            input_ts: i64,
+            input_pv2012: Option<f64>,
+            input_gas: Option<f64>,
+            input_water: Option<f64>,
+            expected: Vec<Data202303>,
+        }
+
+        let cases: Vec<Case> = vec![
+            Case {
+                name: "insert_into_empty",
+                existing: vec![],
+                input_ts: 1000,
+                input_pv2012: Some(1.0),
+                input_gas: Some(2.0),
+                input_water: Some(3.0),
+                expected: vec![Data202303 {
+                    timestamp: 1000,
+                    pv2012_kWh: Some(1.0),
+                    pv2022_kWh: None,
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: Some(2.0),
+                    water_m3: Some(3.0),
+                }],
+            },
+            Case {
+                name: "insert_before_first",
+                existing: vec![Data202303 {
+                    timestamp: 2000,
+                    pv2012_kWh: None,
+                    pv2022_kWh: None,
+                    peak_conso_kWh: None,
+                    off_conso_kWh: Some(3.14),
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: None,
+                    water_m3: None,
+                }],
+                input_ts: 1000,
+                input_pv2012: Some(9.0),
+                input_gas: None,
+                input_water: None,
+                expected: vec![
+                    Data202303 {
+                        timestamp: 1000,
+                        pv2012_kWh: Some(9.0),
+                        pv2022_kWh: None,
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 2000,
+                        pv2012_kWh: None,
+                        pv2022_kWh: None,
+                        peak_conso_kWh: None,
+                        off_conso_kWh: Some(3.14),
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                ],
+            },
+            Case {
+                name: "insert_after_last",
+                existing: vec![Data202303 {
+                    timestamp: 1000,
+                    pv2012_kWh: None,
+                    pv2022_kWh: None,
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: None,
+                    water_m3: None,
+                }],
+                input_ts: 2000,
+                input_pv2012: None,
+                input_gas: Some(7.0),
+                input_water: Some(8.0),
+                expected: vec![
+                    Data202303 {
+                        timestamp: 1000,
+                        pv2012_kWh: None,
+                        pv2022_kWh: None,
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 2000,
+                        pv2012_kWh: None,
+                        pv2022_kWh: None,
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: Some(7.0),
+                        water_m3: Some(8.0),
+                    },
+                ],
+            },
+            Case {
+                name: "update_exact_match (single pre-existing element)",
+                existing: vec![Data202303 {
+                    timestamp: 1500,
+                    pv2012_kWh: None,
+                    pv2022_kWh: Some(42.0),
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: None,
+                    water_m3: None,
+                }],
+                input_ts: 1500,
+                input_pv2012: Some(10.0),
+                input_gas: Some(20.0),
+                input_water: Some(30.0),
+                expected: vec![Data202303 {
+                    timestamp: 1500,
+                    pv2012_kWh: Some(10.0),
+                    pv2022_kWh: Some(42.0), // preserved
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: Some(20.0),
+                    water_m3: Some(30.0),
+                }],
+            },
+            Case {
+                name: "update_exact_match (2 pre-existing elements)",
+                existing: vec![
+                    Data202303 {
+                        timestamp: 1498,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(41.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 1500,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(42.0),
+                        peak_conso_kWh: Some(43.0),
+                        off_conso_kWh: Some(44.0),
+                        peak_inj_kWh: Some(45.0),
+                        off_inj_kWh: Some(46.0),
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                ],
+                input_ts: 1500,
+                input_pv2012: Some(10.0),
+                input_gas: Some(20.0),
+                input_water: Some(30.0),
+                expected: vec![
+                    Data202303 {
+                        timestamp: 1498,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(41.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 1500,
+                        pv2012_kWh: Some(10.0),
+                        pv2022_kWh: Some(42.0),     // preserved
+                        peak_conso_kWh: Some(43.0), // preserved
+                        off_conso_kWh: Some(44.0),  // preserved
+                        peak_inj_kWh: Some(45.0),   // preserved
+                        off_inj_kWh: Some(46.0),    // preserved
+                        gas_m3: Some(20.0),
+                        water_m3: Some(30.0),
+                    },
+                ],
+            },
+            Case {
+                name: "update_exact_match (3 pre-existing elements)",
+                existing: vec![
+                    Data202303 {
+                        timestamp: 1498,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(41.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 1500,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(42.0),
+                        peak_conso_kWh: Some(43.0),
+                        off_conso_kWh: Some(44.0),
+                        peak_inj_kWh: Some(45.0),
+                        off_inj_kWh: Some(46.0),
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 1501,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(42.1),
+                        peak_conso_kWh: Some(43.1),
+                        off_conso_kWh: Some(44.1),
+                        peak_inj_kWh: Some(45.1),
+                        off_inj_kWh: Some(46.1),
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                ],
+                input_ts: 1500,
+                input_pv2012: Some(10.0),
+                input_gas: Some(20.0),
+                input_water: Some(30.0),
+                expected: vec![
+                    Data202303 {
+                        timestamp: 1498,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(41.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 1500,
+                        pv2012_kWh: Some(10.0),
+                        pv2022_kWh: Some(42.0),     // preserved
+                        peak_conso_kWh: Some(43.0), // preserved
+                        off_conso_kWh: Some(44.0),  // preserved
+                        peak_inj_kWh: Some(45.0),   // preserved
+                        off_inj_kWh: Some(46.0),    // preserved
+                        gas_m3: Some(20.0),
+                        water_m3: Some(30.0),
+                    },
+                    Data202303 {
+                        timestamp: 1501,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(42.1),
+                        peak_conso_kWh: Some(43.1),
+                        off_conso_kWh: Some(44.1),
+                        peak_inj_kWh: Some(45.1),
+                        off_inj_kWh: Some(46.1),
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                ],
+            },
+            Case {
+                name: "insert_no_close_match_more_than_60s_away",
+                existing: vec![Data202303 {
+                    timestamp: 1000,
+                    pv2012_kWh: None,
+                    pv2022_kWh: Some(1.23),
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: None,
+                    water_m3: None,
+                }],
+                input_ts: 1200, // 200s away, should insert
+                input_pv2012: Some(9.0),
+                input_gas: Some(8.0),
+                input_water: Some(7.0),
+                expected: vec![
+                    Data202303 {
+                        timestamp: 1000,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(1.23),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 1200,
+                        pv2012_kWh: Some(9.0),
+                        pv2022_kWh: None,
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: Some(8.0),
+                        water_m3: Some(7.0),
+                    },
+                ],
+            },
+            Case {
+                name: "update_when_exactly_60s_apart",
+                existing: vec![Data202303 {
+                    timestamp: 1000,
+                    pv2012_kWh: None,
+                    pv2022_kWh: Some(55.0),
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: None,
+                    water_m3: None,
+                }],
+                input_ts: 1060, // exactly 60s away
+                input_pv2012: Some(1.0),
+                input_gas: Some(2.0),
+                input_water: Some(3.0),
+                expected: vec![Data202303 {
+                    timestamp: 1000,
+                    pv2012_kWh: Some(1.0),
+                    pv2022_kWh: Some(55.0),
+                    peak_conso_kWh: None,
+                    off_conso_kWh: None,
+                    peak_inj_kWh: None,
+                    off_inj_kWh: None,
+                    gas_m3: Some(2.0),
+                    water_m3: Some(3.0),
+                }],
+            },
+            Case {
+                name: "update_earlier_of_two_candidates",
+                existing: vec![
+                    Data202303 {
+                        timestamp: 940,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(10.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                    Data202303 {
+                        timestamp: 1060,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(20.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                ],
+                input_ts: 1000, // equally 60s away from 940 and 1060
+                input_pv2012: Some(9.0),
+                input_gas: Some(8.0),
+                input_water: Some(7.0),
+                expected: vec![
+                    Data202303 {
+                        timestamp: 940,
+                        pv2012_kWh: Some(9.0), // should update earliest
+                        pv2022_kWh: Some(10.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: Some(8.0),
+                        water_m3: Some(7.0),
+                    },
+                    Data202303 {
+                        timestamp: 1060,
+                        pv2012_kWh: None,
+                        pv2022_kWh: Some(20.0),
+                        peak_conso_kWh: None,
+                        off_conso_kWh: None,
+                        peak_inj_kWh: None,
+                        off_inj_kWh: None,
+                        gas_m3: None,
+                        water_m3: None,
+                    },
+                ],
+            },
+        ];
+
+        for case in cases {
+            let state: SharedState = Arc::new(RwLock::new(AppState::default()));
+            let mut w = state.write().unwrap();
+            for d in &case.existing {
+                w.data.push(clone_data202303(d));
+            }
+
+            save_manual_inputs(
+                &mut w,
+                DateTime::from_timestamp_nanos(case.input_ts * 1_000_000_000).into(),
+                case.input_pv2012,
+                case.input_gas,
+                case.input_water,
+            );
+
+            w.data.with_view(|vw| {
+                let got: Vec<_> = vw.into_iter().map(clone_data202303).collect();
+                assert_eq!(got, case.expected, "failed case: {}", case.name);
+            });
+        }
     }
 }
