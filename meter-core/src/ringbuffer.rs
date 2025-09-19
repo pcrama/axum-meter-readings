@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::mem::swap;
+use std::mem::{replace, swap};
 
 pub struct RingBuffer<A> {
     buffer: Vec<A>,
@@ -45,6 +45,10 @@ impl<'a, A> RingBufferView<'a, A> {
             len: self.ring_buffer.len(),
             limit: Some(limit),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.ring_buffer.len()
     }
 }
 
@@ -154,6 +158,59 @@ impl<A> RingBuffer<A> {
         self.capacity
     }
 
+    pub fn replace(&mut self, idx: usize, val: A) -> Option<A> {
+        if idx < self.len() {
+            let dest_idx = (self.start + idx) % self.capacity;
+            Some(replace(&mut self.buffer[dest_idx], val))
+        } else {
+            None
+        }
+    }
+
+    pub fn insert_at(&mut self, idx: usize, val: A) -> Option<A> {
+        let len = self.len();
+        if idx > len {
+            return Some(val);
+        }
+        if idx == len {
+            return self.push(val);
+        }
+        let mut val = val;
+        let mut write_idx = (self.start + idx) % self.capacity;
+        let mut count = len - idx;
+        while {
+            val = replace(&mut self.buffer[write_idx], val);
+            write_idx = (write_idx + 1) % self.capacity;
+            count -= 1;
+            count > 0
+        } {}
+        if self.start == 0 && self.end < self.capacity {
+            self.end += 1;
+        } else {
+            self.end = (self.end + 1) % self.capacity;
+        }
+        if len == self.capacity {
+            // ring was full, so we must acknowledge that we overwrote an
+            // existing element (which we will return below)
+            self.start = (self.start + 1) % self.capacity;
+            if self.start == self.end && self.start == 0 {
+                self.end = self.capacity;
+            }
+        }
+        if write_idx >= self.buffer.len() {
+            self.buffer.push(val);
+            return None;
+        } else {
+            val = replace(&mut self.buffer[write_idx], val);
+        }
+        if len == self.capacity {
+            // ring was already full before inserting, evict last element
+            return Some(val);
+        } else {
+            return None;
+        }
+    }
+
     pub fn halve_data(&mut self) {
         let len = self.len();
         if len <= 1 {
@@ -194,8 +251,15 @@ impl<A> RingBuffer<A> {
     where
         F: FnOnce(RingBufferViewIter<'_, A>) -> R,
     {
+        return self.with_view(|vw| f(vw.iter_limited(limit)));
+    }
+
+    pub fn with_view<R, F>(&mut self, f: F) -> R
+    where
+        F: FnOnce(RingBufferView<'_, A>) -> R,
+    {
         let frozen = freeze(self);
-        return f(frozen.iter_limited(limit));
+        return f(frozen);
     }
 }
 
@@ -298,6 +362,39 @@ mod tests {
         assert_eq!(rb.len(), 3);
         assert_eq!(rb.push(7), Some(4));
         assert_eq!(rb.len(), 3);
+    }
+
+    #[test]
+    fn ringbuffer_replace_works() {
+        let mut rb = new::<i32>(4);
+        rb.push(0);
+        rb.push(1);
+        rb.push(2); // <0 1 2>
+        assert_eq!(rb.replace(3, 99), None);
+        assert_eq!(rb.replace(4, 99), None);
+        assert_eq!(rb.replace(99, 99), None);
+        assert_eq!(rb.replace(0, 10), Some(0));
+        assert_eq!(rb.replace(0, 100), Some(10));
+        assert_eq!(rb.replace(1, 11), Some(1));
+        assert_eq!(rb.replace(1, 101), Some(11));
+        assert_eq!(rb.replace(2, 12), Some(2));
+        assert_eq!(rb.replace(2, 102), Some(12));
+        rb.push(3); // <100 101 102 3>
+        rb.push(4); // 4> <101 102 3
+        assert_eq!(rb.replace(4, 99), None);
+        assert_eq!(rb.replace(99, 99), None);
+        assert_eq!(rb.replace(0, 1001), Some(101));
+        assert_eq!(rb.replace(3, 14), Some(4));
+        rb.push(5); // 14 5> <102 3
+        assert_eq!(rb.replace(3, 15), Some(5));
+        assert_eq!(rb.replace(2, 104), Some(14));
+        assert_eq!(rb.replace(1, 13), Some(3));
+        assert_eq!(rb.replace(0, 1002), Some(102));
+        rb.drop_first(1); // 104 15> <13
+        assert_eq!(rb.replace(3, 99), None);
+        assert_eq!(rb.replace(2, 105), Some(15));
+        assert_eq!(rb.replace(1, 1004), Some(104));
+        assert_eq!(rb.replace(0, 103), Some(13));
     }
 
     #[test]
@@ -619,5 +716,123 @@ mod tests {
         let view = freeze(&rb);
         let collected: Vec<_> = view.into_iter().cloned().collect();
         assert!(collected.is_empty());
+    }
+
+    #[test]
+    fn test_ring_buffer_insert_at() {
+        let mut rb = new::<&'static str>(8);
+        assert_eq!(rb.insert_at(1, "ignored"), Some("ignored"));
+        assert_eq!(rb.insert_at(99, "ignored,99"), Some("ignored,99"));
+        assert_eq!(rb.insert_at(0, "a"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a"]
+        );
+        rb.push("b");
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+        assert_eq!(rb.insert_at(0, "a0"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a0", "a", "b"]
+        );
+        assert_eq!(rb.insert_at(1, "a1"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a0", "a1", "a", "b"]
+        );
+        assert_eq!(rb.insert_at(3, "b1"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a0", "a1", "a", "b1", "b"]
+        );
+        assert_eq!(rb.insert_at(3, "b0"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a0", "a1", "a", "b0", "b1", "b"]
+        );
+        assert_eq!(rb.insert_at(5, "b2"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a0", "a1", "a", "b0", "b1", "b2", "b"]
+        );
+        assert_eq!(rb.insert_at(6, "b3"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a0", "a1", "a", "b0", "b1", "b2", "b3", "b"]
+        );
+        assert_eq!(rb.insert_at(7, "b4"), Some("a0"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a1", "a", "b0", "b1", "b2", "b3", "b4", "b"]
+        );
+        assert_eq!(rb.insert_at(8, "c"), Some("a1"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a", "b0", "b1", "b2", "b3", "b4", "b", "c"]
+        );
+        assert_eq!(rb.insert_at(1, "d"), Some("a"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["d", "b0", "b1", "b2", "b3", "b4", "b", "c"]
+        );
+        rb.drop_first(3);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b2", "b3", "b4", "b", "c"]
+        );
+        assert_eq!(rb.insert_at(1, "e"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b2", "e", "b3", "b4", "b", "c"]
+        );
+        assert_eq!(rb.insert_at(3, "f"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b2", "e", "b3", "f", "b4", "b", "c"]
+        );
+        assert_eq!(rb.insert_at(1, "b5"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b2", "b5", "e", "b3", "f", "b4", "b", "c"]
+        );
+        assert_eq!(rb.insert_at(2, "b6"), Some("b2"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b5", "b6", "e", "b3", "f", "b4", "b", "c"]
+        );
+        assert_eq!(rb.insert_at(8, "h"), Some("b5"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b6", "e", "b3", "f", "b4", "b", "c", "h"]
+        );
+        assert_eq!(rb.insert_at(7, "g"), Some("b6"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["e", "b3", "f", "b4", "b", "c", "g", "h"]
+        );
+        assert_eq!(rb.insert_at(6, "d"), Some("e"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b3", "f", "b4", "b", "c", "d", "g", "h"]
+        );
+        assert_eq!(rb.insert_at(6, "e"), Some("b3"));
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["f", "b4", "b", "c", "d", "e", "g", "h"]
+        );
+        rb.drop_first(2);
+        assert_eq!(rb.insert_at(4, "f"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["b", "c", "d", "e", "f", "g", "h"]
+        );
+        assert_eq!(rb.insert_at(0, "a"), None);
+        assert_eq!(
+            freeze(&rb).into_iter().cloned().collect::<Vec<_>>(),
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"]
+        );
     }
 }
