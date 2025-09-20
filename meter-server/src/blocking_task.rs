@@ -95,16 +95,15 @@ pub fn poll_automated_measurements(
     p1_data_cmd: &str,
     pv_2022_cmd: &str,
 ) -> (Option<CompleteP1Measurement>, Option<f64>) {
-    let stdout = Command::new("sh")
+    let mut child = Command::new("sh")
         .arg("-c")
         .arg(p1_data_cmd)
         .stdout(Stdio::piped())
         .spawn()
-        .unwrap()
-        .stdout
         .unwrap();
-    let reader = BufReader::new(stdout);
-    let p1 = match p1_meter::parse_lines(reader.lines().map(|x| x.unwrap())) {
+    let stdout = child.stdout.take().unwrap();
+    let lines = BufReader::new(stdout).lines().map(|x| x.unwrap());
+    let p1 = match p1_meter::parse_lines(lines) {
         Ok(Some(complete)) => {
             println!("complete = {:?}", complete);
             Some(complete)
@@ -115,6 +114,7 @@ pub fn poll_automated_measurements(
         }
         Err(_) => panic!("Error"),
     };
+    child.wait().expect("unable to kill p1_data_cmd?");
     let pv_2022 = match pv2022::fetch_dashboard_value(pv_2022_cmd) {
         Ok(pv_2022) => {
             println!("PV2022={}", pv_2022);

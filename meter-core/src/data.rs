@@ -241,7 +241,7 @@ pub fn select_data_202303(cmd: &str) -> Result<Vec<Data202303>, String> {
 }
 
 pub fn call_sqlite3(cmd: &str, input: &str) -> String {
-    let process = match Command::new("sh")
+    let mut process = match Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .stdin(Stdio::piped())
@@ -254,7 +254,7 @@ pub fn call_sqlite3(cmd: &str, input: &str) -> String {
 
     // stdin has type Option<ChildStdin>, but since we know this instance
     // must have one, we can directly unwrap it.
-    match process.stdin.unwrap().write_all(input.as_bytes()) {
+    match process.stdin.take().unwrap().write_all(input.as_bytes()) {
         Err(why) => panic!("couldn't write to sqlite3 stdin: {}", why),
         Ok(_) => {}
     }
@@ -267,10 +267,11 @@ pub fn call_sqlite3(cmd: &str, input: &str) -> String {
 
     // The stdout field also has type Option<ChildStdout> so must be unwrapped.
     let mut s = String::new();
-    match process.stdout.unwrap().read_to_string(&mut s) {
+    match process.stdout.take().unwrap().read_to_string(&mut s) {
         Err(why) => panic!("couldn't read sqlite3 stdout: {}", why),
         Ok(_) => {}
     }
+    process.wait().unwrap();
     return s;
 }
 

@@ -8,13 +8,15 @@ use std::{
 
 curl --silent --connect-timeout 1 --max-time 2 --insecure https://sunnyboy50/dyn/getDashValues.json */
 pub fn fetch_dashboard_value(pv_2022_cmd: &str) -> core::result::Result<f64, String> {
-    let stdout = Command::new("sh")
+    let mut child = Command::new("sh")
         .arg("-c")
         .arg(pv_2022_cmd)
         .stdout(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn {}: {}", pv_2022_cmd, e))?
+        .map_err(|e| format!("Failed to spawn {}: {}", pv_2022_cmd, e))?;
+    let stdout = child
         .stdout
+        .take()
         .ok_or(format!("Failed to get output of {}", pv_2022_cmd))?;
 
     let mut reader = BufReader::new(stdout);
@@ -22,6 +24,9 @@ pub fn fetch_dashboard_value(pv_2022_cmd: &str) -> core::result::Result<f64, Str
     reader
         .read_to_end(&mut response_bytes)
         .map_err(|e| format!("Failed to read stdout: {}", e))?;
+    child
+        .wait()
+        .map_err(|e| format!("Unable to wait for '{}': {}", pv_2022_cmd, e))?;
 
     let response_text = std::str::from_utf8(&response_bytes)
         .map_err(|e| format!("Failed to parse curl response as UTF-8: {}", e))?;
