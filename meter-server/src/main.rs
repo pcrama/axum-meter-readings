@@ -259,7 +259,7 @@ async fn main() {
     // Build our application by composing routes
     let app = Router::new()
         .route(
-            "/form",
+            "/axum-meter-readings/form",
             get_service(get_form.with_state(Arc::clone(&shared_state)))
                 .post_service(post_form.with_state(Arc::clone(&shared_state))),
         )

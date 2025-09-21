@@ -1,0 +1,26 @@
+# /etc/systemd/system/axum-meter-readings.service
+#
+# cd /etc/systemd/system/multi-user.target.wants
+# sudo ln -s ../axum-meter-readings.service
+
+[Unit]
+Description=Rust (Axum framework) web application to track my meter values
+After=syslog.target network.target
+
+[Service]
+Type=simple
+User=dietpi
+Group=dietpi
+Environment="AXUM_METER_READINGS_P1_DATA_CMD=sudo stty -F /dev/ttyUSB0 115200 cs8 -parenb; sudo head -n 200 /dev/ttyUSB0"
+Environment="AXUM_METER_READINGS_PV_2022_CMD=curl --silent --connect-timeout 1 --max-time 2 --insecure https://sunnyboy50/dyn/getDashValues.json"
+Environment="AXUM_METER_READINGS_SQL_CMD=sqlite3 db.db"
+Environment="AXUM_METER_READINGS_DUMP_INTERVAL=3600"
+Environment="AXUM_METER_READINGS_BIND_ADDR=127.0.0.1:3000"
+Environment="RUST_BACKTRACE=1"
+WorkingDirectory=/mnt/dietpi_userdata/axum-meter-readings/target/release/
+ExecStart=/mnt/dietpi_userdata/axum-meter-readings/target/release/meter-server
+RestartSec=10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
