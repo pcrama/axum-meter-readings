@@ -31,6 +31,7 @@ impl AppState {
         &mut self,
         p1: Option<CompleteP1Measurement>,
         pv_2022: Option<f64>,
+        verbose: bool,
     ) -> Option<Data202303> {
         if p1 == None && pv_2022 == None {
             return None;
@@ -48,7 +49,9 @@ impl AppState {
             None => 999,
         };
         if time_since_last_update < 60 {
-            println!("time_since_last_update={}", time_since_last_update);
+            if verbose {
+                println!("time_since_last_update={}", time_since_last_update)
+            };
             return None;
         }
 
@@ -94,6 +97,7 @@ impl AppState {
 pub fn poll_automated_measurements(
     p1_data_cmd: &str,
     pv_2022_cmd: &str,
+    verbose: bool,
 ) -> (Option<CompleteP1Measurement>, Option<f64>) {
     let mut child = Command::new("sh")
         .arg("-c")
@@ -105,19 +109,25 @@ pub fn poll_automated_measurements(
     let lines = BufReader::new(stdout).lines().map(|x| x.unwrap());
     let p1 = match p1_meter::parse_lines(lines) {
         Ok(Some(complete)) => {
-            println!("complete = {:?}", complete);
+            if verbose {
+                println!("complete = {:?}", complete)
+            };
             Some(complete)
         }
         Ok(None) => {
-            println!("nothing parsed");
+            if verbose {
+                println!("nothing parsed")
+            };
             None
         }
         Err(_) => panic!("Error"),
     };
     child.wait().expect("unable to kill p1_data_cmd?");
-    let pv_2022 = match pv2022::fetch_dashboard_value(pv_2022_cmd) {
+    let pv_2022 = match pv2022::fetch_dashboard_value(pv_2022_cmd, verbose) {
         Ok(pv_2022) => {
-            println!("PV2022={}", pv_2022);
+            if verbose {
+                println!("PV2022={}", pv_2022)
+            };
             Some(pv_2022)
         }
         Err(s) => {
@@ -134,9 +144,10 @@ pub fn save_data(
     pv_2022: Option<f64>,
     sql_cmd: &str,
     dump_interval: i64,
+    verbose: bool,
 ) {
     let state = &mut blocking_ref.write().unwrap();
-    if let Some(_) = state.set_data(p1, pv_2022) {
+    if let Some(_) = state.set_data(p1, pv_2022, verbose) {
         state.halve_data();
     }
     if let (Some(first), Some(last)) = (state.get_first_data(), state.get_last_data()) {
@@ -260,7 +271,7 @@ mod tests {
     #[test]
     fn no_measurement() {
         assert_eq!(
-            poll_automated_measurements("echo A", "echo B"),
+            poll_automated_measurements("echo A", "echo B", true),
             (None, None)
         )
     }
@@ -268,7 +279,7 @@ mod tests {
     #[test]
     fn only_pv_2022_measurement() {
         assert_eq!(
-            poll_automated_measurements("echo A", FAKE_PV_2022),
+            poll_automated_measurements("echo A", FAKE_PV_2022, true),
             (None, Some(7439.043))
         )
     }
@@ -276,7 +287,7 @@ mod tests {
     #[test]
     fn only_p1_measurement() {
         assert_eq!(
-            poll_automated_measurements(FAKE_P1, "echo B"),
+            poll_automated_measurements(FAKE_P1, "echo B", true),
             (
                 Some(CompleteP1Measurement {
                     timestamp: Utc.with_ymd_and_hms(2024, 10, 24, 22, 0, 0).unwrap(),
@@ -293,7 +304,7 @@ mod tests {
     #[test]
     fn both_measurements() {
         assert_eq!(
-            poll_automated_measurements(FAKE_P1, FAKE_PV_2022),
+            poll_automated_measurements(FAKE_P1, FAKE_PV_2022, true),
             (
                 Some(CompleteP1Measurement {
                     timestamp: Utc.with_ymd_and_hms(2024, 10, 24, 22, 0, 0).unwrap(),
@@ -325,6 +336,7 @@ mod tests {
             Some(1234.0),
             "echo dontcallmenow; exit 123",
             3600,
+            true,
         );
 
         assert_eq!(state.read().unwrap().data.len(), 1);
@@ -344,6 +356,7 @@ mod tests {
                 Some(5678.0 + (i as f64)),
                 &format!("echo dontcallmenow; exit 1{}4", i),
                 3600,
+                true,
             );
         }
 
@@ -363,6 +376,7 @@ mod tests {
             Some(6789.0),
             "echo 10; echo 14",
             3600,
+            true,
         );
 
         // After flushing, the buffer should have dropped 14-10==4 entries

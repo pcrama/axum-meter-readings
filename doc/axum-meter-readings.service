@@ -17,6 +17,7 @@ Environment="AXUM_METER_READINGS_PV_2022_CMD=curl --silent --connect-timeout 1 -
 Environment="AXUM_METER_READINGS_SQL_CMD=sqlite3 db.db"
 Environment="AXUM_METER_READINGS_DUMP_INTERVAL=3600"
 Environment="AXUM_METER_READINGS_BIND_ADDR=127.0.0.1:3000"
+Environment="AXUM_METER_READINGS_VERBOSE=false"
 Environment="RUST_BACKTRACE=1"
 WorkingDirectory=/mnt/dietpi_userdata/axum-meter-readings/target/release/
 ExecStartPre=+/usr/bin/stty -F /dev/ttyUSB0 115200 cs8 -parenb
