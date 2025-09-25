@@ -80,7 +80,7 @@ pub fn insert_data_202303(cmd: &str, meas: &Data202303) -> Result<usize, String>
     let sql_output = call_sqlite3(
         cmd,
         format!(
-            ".mode list\ninsert into data_202303 values ({}, {}, {}, {}, {}, {}, {}, {}, {});select count(*) from data_202303;",
+            ".mode list\nINSERT INTO data_202303 VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {});\nSELECT COUNT(*) FROM data_202303;",
             meas.timestamp,
             &some_val_to_sql(meas.pv2012_kWh),
             &some_val_to_sql(meas.pv2022_kWh),
@@ -165,7 +165,7 @@ where
 pub fn select_data_202208(cmd: &str) -> Result<Vec<Data202208>, String> {
     let sql_output = call_sqlite3(
         cmd,
-        ".mode list\nselect count(*) from data_202208;\nselect timestamp, pv2012_kWh, pv2022_kWh, peak_conso_kWh, off_conso_kWh, gas_m3, water_m3 from data_202208;",
+        ".mode list\nSELECT COUNT(*) FROM data_202208;\nSELECT timestamp, pv2012_kWh, pv2022_kWh, peak_conso_kWh, off_conso_kWh, gas_m3, water_m3 FROM data_202208;",
     );
     let mut info = sql_output.lines();
     let count = match info.next().map(usize::from_str) {
@@ -203,7 +203,7 @@ pub fn select_data_202208(cmd: &str) -> Result<Vec<Data202208>, String> {
 pub fn select_data_202303(cmd: &str) -> Result<Vec<Data202303>, String> {
     let sql_output = call_sqlite3(
         cmd,
-        ".mode list\nselect count(*) from data_202303;\nselect timestamp, pv2012_kWh, pv2022_kWh, peak_conso_kWh, off_conso_kWh, peak_inj_kWh, off_inj_kWh, gas_m3, water_m3 from data_202303;",
+        ".mode list\nSELECT COUNT(*) FROM data_202303;\nSELECT timestamp, pv2012_kWh, pv2022_kWh, peak_conso_kWh, off_conso_kWh, peak_inj_kWh, off_inj_kWh, gas_m3, water_m3 FROM data_202303;",
     );
     let mut info = sql_output.lines();
     let count = match info.next().map(usize::from_str) {
@@ -356,7 +356,12 @@ mod tests {
     #[test]
     fn can_insert_data_202303() {
         let result = insert_data_202303(
-            "sed -n -e '/insert into data_202303 values (1695485100, 50622\\.3, 3579\\.4, NULL, 630, 321, 1189\\.4, 28973\\.5, 867\\.5);select count(\\*) from data_202303;/{ s/.*/1234/p; d; p }'",
+            "bash -c 'diff -w - <(cat <<EOF\n\
+.mode list\n\
+INSERT INTO data_202303 VALUES (1695485100, 50622.3, 3579.4, NULL, 630, 321, 1189.4, 28973.5, 867.5);\n\
+SELECT COUNT(*) FROM data_202303;\n\
+EOF\n
+) && echo \"1234\"'",
             &Data202303 {
                 timestamp: 1695485100,
                 pv2012_kWh: Some(50622.3),
