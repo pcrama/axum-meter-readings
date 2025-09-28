@@ -149,7 +149,10 @@ impl<A> RingBuffer<A> {
                 };
                 self.buffer[self.end] = val;
             }
-            self.end = (self.end + 1) % self.capacity;
+            self.end = self.end + 1;
+            if self.end > self.capacity {
+                self.end = 0;
+            }
             return None;
         }
     }
@@ -230,13 +233,13 @@ impl<A> RingBuffer<A> {
     }
 
     pub fn drop_first(&mut self, n: usize) {
-        let mut n = n;
         let len = self.len();
         if n >= len {
             self.start = 0;
             self.end = 0;
             return;
         }
+        let mut n = n;
         while n > 0 {
             if self.start < self.end {
                 self.start += 1;
@@ -339,6 +342,29 @@ mod tests {
     }
 
     #[test]
+    fn ringbuffer_peek_last_edge_condition() {
+        let mut rb = new::<&str>(4);
+        rb.push("a");
+        rb.push("bb");
+        rb.push("ccc");
+        rb.drop_first(2);
+        assert_eq!(rb.peek_first(strlen), Some(3));
+        assert_eq!(rb.peek_last(strlen), Some(3));
+        rb.push("dddd");
+        assert_eq!(rb.peek_first(strlen), Some(3));
+        assert_eq!(rb.peek_last(strlen), Some(4));
+        rb.push("eeeee");
+        assert_eq!(rb.peek_first(strlen), Some(3));
+        assert_eq!(rb.peek_last(strlen), Some(5));
+        rb.push("ffffff");
+        assert_eq!(rb.peek_first(strlen), Some(3));
+        assert_eq!(rb.peek_last(strlen), Some(6));
+        rb.push("ggggggg");
+        assert_eq!(rb.peek_first(strlen), Some(4));
+        assert_eq!(rb.peek_last(strlen), Some(7));
+    }
+
+    #[test]
     fn ringbuffer_overwrites_when_pushing_enough() {
         let mut rb = new::<i32>(3);
         assert_eq!(rb.push(3), None);
@@ -380,17 +406,25 @@ mod tests {
         assert_eq!(rb.replace(2, 12), Some(2));
         assert_eq!(rb.replace(2, 102), Some(12));
         rb.push(3); // <100 101 102 3>
+        assert_eq!(rb.peek_first(idint), Some(100));
+        assert_eq!(rb.peek_last(idint), Some(3));
         rb.push(4); // 4> <101 102 3
+        assert_eq!(rb.peek_first(idint), Some(101));
+        assert_eq!(rb.peek_last(idint), Some(4));
         assert_eq!(rb.replace(4, 99), None);
         assert_eq!(rb.replace(99, 99), None);
         assert_eq!(rb.replace(0, 1001), Some(101));
         assert_eq!(rb.replace(3, 14), Some(4));
         rb.push(5); // 14 5> <102 3
+        assert_eq!(rb.peek_first(idint), Some(102));
+        assert_eq!(rb.peek_last(idint), Some(5));
         assert_eq!(rb.replace(3, 15), Some(5));
         assert_eq!(rb.replace(2, 104), Some(14));
         assert_eq!(rb.replace(1, 13), Some(3));
         assert_eq!(rb.replace(0, 1002), Some(102));
         rb.drop_first(1); // 104 15> <13
+        assert_eq!(rb.peek_first(idint), Some(13));
+        assert_eq!(rb.peek_last(idint), Some(15));
         assert_eq!(rb.replace(3, 99), None);
         assert_eq!(rb.replace(2, 105), Some(15));
         assert_eq!(rb.replace(1, 1004), Some(104));
