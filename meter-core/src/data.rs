@@ -293,15 +293,17 @@ pub fn call_sqlite3(cmd: &str, input: &str) -> String {
     process.wait().unwrap();
     println!(
         "call_sqlite3 '{}' took {:.3}s",
-        if input.len() <= 80 {
+        (if input.len() <= 80 {
             input.to_string()
         } else {
             format!(
-                "{} … {}",
+                "{} \u{2026} {}", // \u2026 = ellipsis (...)
                 &input[..38],
                 &input[input.len() - 39..]
             )
-        },
+        })
+        .replace("\r\n", "\u{23CE}") // \u23CE = graphical representation of newline (<-')
+        .replace('\n', "\u{23CE}"),
         start.elapsed().as_secs_f64()
     );
     return s;
