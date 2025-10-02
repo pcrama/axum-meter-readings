@@ -145,6 +145,7 @@ pub fn save_data(
     sql_cmd: &str,
     dump_interval: i64,
     verbose: bool,
+    insert_batch_size: usize,
 ) {
     let state = &mut blocking_ref.write().unwrap();
     if let Some(_) = state.set_data(p1, pv_2022, verbose) {
@@ -152,7 +153,10 @@ pub fn save_data(
     }
     if let (Some(first), Some(last)) = (state.get_first_data(), state.get_last_data()) {
         if last.timestamp - first.timestamp > dump_interval {
-            match insert_many_data_202303(sql_cmd, freeze(&state.data).iter_limited(100)) {
+            match insert_many_data_202303(
+                sql_cmd,
+                freeze(&state.data).iter_limited(insert_batch_size),
+            ) {
                 Ok(n) if n > 0 => state.data.drop_first(n),
                 Ok(_) => println!("No error but no data saved either"),
                 Err(e) => println!("Error saving data: {}", e),
@@ -337,6 +341,7 @@ mod tests {
             "echo dontcallmenow; exit 123",
             3600,
             true,
+            100,
         );
 
         assert_eq!(state.read().unwrap().data.len(), 1);
@@ -357,6 +362,7 @@ mod tests {
                 &format!("echo dontcallmenow; exit 1{}4", i),
                 3600,
                 true,
+                100,
             );
         }
 
@@ -377,6 +383,7 @@ mod tests {
             "echo 10; echo 14",
             3600,
             true,
+            100,
         );
 
         // After flushing, the buffer should have dropped 14-10==4 entries

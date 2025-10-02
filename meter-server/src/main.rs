@@ -273,17 +273,44 @@ async fn main() {
         s.to_uppercase() != "FALSE" && s.to_uppercase() != "NO" && s != "0"
     });
     let blocking_ref = Arc::clone(&shared_state);
-    let polling_period = Duration::from_secs(15);
+    let polling_period = Duration::from_secs(
+        env::var("AXUM_METER_READINGS_POLLING_PERIOD")
+            .ok()
+            .map(|s| s.parse::<u64>().ok())
+            .flatten()
+            .unwrap_or(15),
+    );
+    let insert_batch_size = env::var("AXUM_METER_READINGS_INSERT_BATCH_SIZE")
+        .ok()
+        .map(|s| s.parse::<usize>().ok())
+        .flatten()
+        .unwrap_or(100);
     let _res = task::spawn_blocking(move || {
         println!("AXUM_METER_READINGS_P1_DATA_CMD='{}'", p1_data_cmd);
         println!("AXUM_METER_READINGS_PV_2022_CMD='{}'", pv_2022_cmd);
         println!("AXUM_METER_READINGS_SQL_CMD='{}'", sql_cmd);
         println!("AXUM_METER_READINGS_DUMP_INTERVAL='{}'", dump_interval);
         println!("AXUM_METER_READINGS_VERBOSE={}", verbose);
+        println!(
+            "AXUM_METER_READINGS_POLLING_PERIOD={:.3}",
+            polling_period.as_secs_f64()
+        );
+        println!(
+            "AXUM_METER_READINGS_INSERT_BATCH_SIZE={}",
+            insert_batch_size
+        );
         loop {
             let start = Instant::now();
             let (p1, pv_2022) = poll_automated_measurements(&p1_data_cmd, &pv_2022_cmd, verbose);
-            save_data(&blocking_ref, p1, pv_2022, &sql_cmd, dump_interval, verbose);
+            save_data(
+                &blocking_ref,
+                p1,
+                pv_2022,
+                &sql_cmd,
+                dump_interval,
+                verbose,
+                insert_batch_size,
+            );
             let elapsed = start.elapsed();
             if elapsed < polling_period {
                 thread::sleep(polling_period - elapsed);

@@ -2,6 +2,7 @@ use std::fmt::{Display, Write as FmtWrite};
 use std::io::{Read, Write as StdIoWrite};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
+use std::time::Instant;
 
 /*
 CREATE TABLE data_202208 (
@@ -97,6 +98,8 @@ pub fn insert_many_data_202303<'a, I>(cmd: &str, data_iter: I) -> Result<usize, 
 where
     I: IntoIterator<Item = &'a Data202303>,
 {
+    let start = Instant::now();
+
     let mut sql =
         String::from(".mode list\nSELECT COUNT(*) FROM data_202303;\nBEGIN TRANSACTION;\n");
     let mut inserted_any = false;
@@ -120,6 +123,10 @@ where
     }
 
     if !inserted_any {
+        println!(
+            "insert_many_data_202303 executed in {:.3}s, early return",
+            start.elapsed().as_secs_f64()
+        );
         return Ok(0);
     }
 
@@ -130,6 +137,10 @@ where
     // Expect two lines: one for initial count, one for final count
     let lines: Vec<&str> = sql_output.lines().collect();
     if lines.len() < 2 {
+        println!(
+            "insert_many_data_202303 failed after {:.3}s",
+            start.elapsed().as_secs_f64()
+        );
         return Err(format!("Unexpected output from SQLite: '{}'", sql_output));
     }
 
@@ -142,7 +153,14 @@ where
         .parse::<usize>()
         .map_err(|e| format!("Failed to parse final count in '{}': {}", last_line, e))?;
 
-    Ok(after - before)
+    let inserted = after - before;
+    println!(
+        "insert_many_data_202303 inserted {} rows in {:.3}s",
+        inserted,
+        start.elapsed().as_secs_f64()
+    );
+
+    Ok(inserted)
 }
 
 fn some_str_to_result<B, C, F>(a: Option<&str>, f: F) -> Result<Option<B>, String>
@@ -241,6 +259,7 @@ pub fn select_data_202303(cmd: &str) -> Result<Vec<Data202303>, String> {
 }
 
 pub fn call_sqlite3(cmd: &str, input: &str) -> String {
+    let start = Instant::now();
     let mut process = match Command::new("sh")
         .arg("-c")
         .arg(cmd)
@@ -272,6 +291,19 @@ pub fn call_sqlite3(cmd: &str, input: &str) -> String {
         Ok(_) => {}
     }
     process.wait().unwrap();
+    println!(
+        "call_sqlite3 '{}' took {:.3}s",
+        if input.len() <= 80 {
+            input.to_string()
+        } else {
+            format!(
+                "{} … {}",
+                &input[..38],
+                &input[input.len() - 39..]
+            )
+        },
+        start.elapsed().as_secs_f64()
+    );
     return s;
 }
 
